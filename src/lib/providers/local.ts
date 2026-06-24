@@ -9,6 +9,7 @@
 import type { TokenUsage } from "../types";
 import { estimateTokens } from "../crypto";
 import { getModelById, pickDevice } from "../models";
+import { downloadModelFiles } from "../modelDownloader";
 import {
   type ChatParams,
   type ChatProvider,
@@ -25,17 +26,10 @@ const TRANSFORMERS_CDNS = [
   "https://unpkg.com/@huggingface/transformers@3.8.1",
 ];
 
-// 模型权重镜像源
-const MIRROR_HOSTS = {
-  hf: "https://huggingface.co",
-  "hf-mirror": "https://hf-mirror.com",
-};
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type TfModule = any;
 
 let tfPromise: Promise<TfModule> | null = null;
-let currentMirror: "auto" | "hf" | "hf-mirror" = "auto";
 
 /** 引擎（Transformers.js 库）加载失败 —— 通常是 CDN 网络问题 */
 export class EngineLoadError extends Error {
@@ -47,10 +41,7 @@ export class EngineLoadError extends Error {
   }
 }
 
-function loadTransformers(
-  mirror: "auto" | "hf" | "hf-mirror",
-): Promise<TfModule> {
-  currentMirror = mirror;
+function loadTransformers(): Promise<TfModule> {
   if (tfPromise) return tfPromise;
 
   tfPromise = (async () => {
@@ -59,9 +50,10 @@ function loadTransformers(
       tried.push(cdn);
       try {
         const mod = await import(/* @vite-ignore */ cdn);
+        // 模型文件由自定义下载器缓存到 IndexedDB，通过 patch fetch 加载，
+        // 不使用 Transformers.js 自带的浏览器缓存（避免与 IndexedDB 重复）
         mod.env.allowLocalModels = false;
-        mod.env.useBrowserCache = true;
-        applyMirror(mod, mirror);
+        mod.env.useBrowserCache = false;
         return mod;
       } catch (e) {
         console.warn(`[transformers] CDN 加载失败: ${cdn}`, e);
@@ -75,28 +67,11 @@ function loadTransformers(
   return tfPromise;
 }
 
-function applyMirror(mod: TfModule, mirror: "auto" | "hf" | "hf-mirror") {
-  if (mirror === "hf") {
-    mod.env.remoteHost = MIRROR_HOSTS.hf;
-  } else if (mirror === "hf-mirror") {
-    mod.env.remoteHost = MIRROR_HOSTS["hf-mirror"];
-  }
-  // auto: 不修改，用默认 huggingface.co
-}
-
 interface LoadedModel {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   generator: any;
   modelId: string;
   device: string;
-}
-
-// 文件下载跟踪
-interface FileProgress {
-  name: string;
-  progress: number; // 0-100
-  loaded: number;
-  total: number;
 }
 
 export class LocalProvider implements ChatProvider {
@@ -107,6 +82,7 @@ export class LocalProvider implements ChatProvider {
   private loadingPromise: Promise<LoadedModel> | null = null;
   private device: string = "wasm";
   private mirror: "auto" | "hf" | "hf-mirror" = "auto";
+  private abortController: AbortController | null = null;
 
   constructor(modelId: string) {
     this.modelId = modelId;
@@ -137,6 +113,7 @@ export class LocalProvider implements ChatProvider {
 
   abort(): void {
     this.aborted = true;
+    this.abortController?.abort();
   }
 
   /** 加载（含首次下载）模型，带详细进度回调 */
@@ -146,6 +123,8 @@ export class LocalProvider implements ChatProvider {
     if (this.loaded) return this.loaded;
     if (this.loadingPromise) return this.loadingPromise;
 
+    this.aborted = false;
+    this.abortController = new AbortController();
     this.loadingPromise = this.doLoad(onProgress);
     try {
       this.loaded = await this.loadingPromise;
@@ -162,9 +141,7 @@ export class LocalProvider implements ChatProvider {
     onProgress?: (info: ProgressInfo) => void,
   ): Promise<LoadedModel> {
     onProgress?.({ stage: "init", progress: 0, message: "加载推理引擎…" });
-    const tf = await loadTransformers(this.mirror);
-    // 动态应用镜像（库已加载但镜像可能变了）
-    applyMirror(tf, this.mirror);
+    const tf = await loadTransformers();
 
     const config = getModelById(this.modelId);
 
@@ -174,160 +151,117 @@ export class LocalProvider implements ChatProvider {
     this.device = device;
     onProgress?.({ stage: "init", progress: 8, message: reason });
 
-    onProgress?.({
-      stage: "downloading",
-      progress: 0,
-      message: `开始下载 ${config.name}（${config.sizeLabel}）`,
-      filesCompleted: 0,
-      filesTotal: 0,
-    });
-
-    // 文件级进度跟踪
-    const fileMap = new Map<string, FileProgress>();
-    const fileOrder: string[] = [];
-    let lastSpeedTime = 0;
-    let lastSpeedLoaded = 0;
-    let speedBps = 0;
-    let stuckCount = 0;
-    let lastProgressTime = Date.now();
-
-    const progressCallback = (info: {
-      status?: string;
-      file?: string;
-      progress?: number;
-      loaded?: number;
-      total?: number;
-      name?: string;
-    }) => {
-      const file = info.file || info.name;
-      const now = Date.now();
-
-      if (file && !fileMap.has(file)) {
-        fileMap.set(file, {
-          name: file,
-          progress: 0,
-          loaded: 0,
-          total: 0,
-        });
-        fileOrder.push(file);
-      }
-
-      if (file && typeof info.progress === "number") {
-        const fp = fileMap.get(file)!;
-        const wasComplete = fp.progress >= 100;
-        fp.progress = info.progress;
-        fp.loaded = info.loaded ?? fp.loaded;
-        fp.total = info.total ?? fp.total;
-
-        // 计算速度（每 500ms 采样一次）
-        const totalLoaded = Array.from(fileMap.values()).reduce(
-          (s, f) => s + f.loaded,
-          0,
-        );
-        if (now - lastSpeedTime > 500) {
-          if (lastSpeedTime > 0 && totalLoaded > lastSpeedLoaded) {
-            speedBps = ((totalLoaded - lastSpeedLoaded) / (now - lastSpeedTime)) * 1000;
-            stuckCount = 0;
-            lastProgressTime = now;
-          } else if (now - lastProgressTime > 5000) {
-            // 5 秒无进度变化，可能卡住
-            stuckCount++;
-          }
-          lastSpeedTime = now;
-          lastSpeedLoaded = totalLoaded;
-        }
-
-        const filesCompleted = Array.from(fileMap.values()).filter(
-          (f) => f.progress >= 100,
-        ).length;
-        const filesTotal = fileMap.size;
-
-        // 总进度：基于字节（更准确），回退到文件数
-        const totalBytes = Array.from(fileMap.values()).reduce(
-          (s, f) => s + f.total,
-          0,
-        );
-        let overallProgress: number;
-        if (totalBytes > 0) {
-          overallProgress = Math.min(99, (totalLoaded / totalBytes) * 100);
-        } else {
-          overallProgress =
-            filesTotal > 0
-              ? Math.min(99, (filesCompleted / filesTotal) * 100)
-              : 0;
-        }
-
-        // ETA
-        let etaSeconds: number | undefined;
-        if (speedBps > 0 && totalBytes > 0) {
-          etaSeconds = Math.max(0, (totalBytes - totalLoaded) / speedBps);
-        }
-
-        const shortName = file.split("/").pop() || file;
-        const stuck = stuckCount > 2 && !wasComplete;
-
-        onProgress?.({
-          stage: "downloading",
-          progress: Math.round(overallProgress),
-          message: stuck
-            ? `下载似乎较慢，可尝试切换镜像源`
-            : `下载 ${shortName}`,
-          currentFile: shortName,
-          fileProgress: Math.round(info.progress),
-          filesCompleted,
-          filesTotal,
-          loadedBytes: totalLoaded,
-          totalBytes: totalBytes > 0 ? totalBytes : undefined,
-          speedBps: speedBps > 0 ? speedBps : undefined,
-          etaSeconds,
-        });
-      }
-
-      if (info.status === "ready" || info.status === "done") {
-        // 单个文件完成
-        if (file) {
-          const fp = fileMap.get(file);
-          if (fp) fp.progress = 100;
-        }
-      }
-    };
-
-    onProgress?.({
-      stage: "loading",
-      progress: 99,
-      message: "加载模型到内存…",
-    });
-
-    // 根据后端选择 dtype：WASM 对 q4 支持不稳定（可能缺算子），降级用 q8；
-    // WebGPU 原生支持 q4，体积更小下载更快。
-    // 用户若显式选了 q8 模型则尊重其选择。
+    // 根据后端选择 dtype：WASM 用 q8（兼容性最佳），WebGPU 用 q4（体积小）
     let dtype = config.dtype;
     if (this.device === "wasm" && config.dtype === "q4") {
       dtype = "q8";
       onProgress?.({
-        stage: "loading",
-        progress: 99,
-        message: "WASM 后端使用 Q8 精度（兼容性最佳）…",
+        stage: "init",
+        progress: 10,
+        message: "WASM 后端使用 Q8 精度（兼容性最佳）",
       });
     }
+
+    // ---- 阶段1：用自定义下载器预取文件到 IndexedDB（断点续传）----
+    onProgress?.({
+      stage: "downloading",
+      progress: 0,
+      message: `准备下载 ${config.name}（${config.sizeLabel}）`,
+      filesCompleted: 0,
+      filesTotal: 0,
+      loadedBytes: 0,
+      totalBytes: 0,
+      speedBps: 0,
+      etaSeconds: 0,
+    });
+
+    let cachedFiles: Map<string, Blob>;
+    try {
+      cachedFiles = await downloadModelFiles(
+        config.repo,
+        dtype,
+        this.mirror,
+        (info) => {
+          const shortName = info.file.split("/").pop() || info.file;
+          onProgress?.({
+            stage: "downloading",
+            progress: info.progress,
+            message: `下载 ${shortName}（${info.filesCompleted}/${info.filesTotal}）`,
+            currentFile: shortName,
+            fileProgress: info.fileProgress,
+            filesCompleted: info.filesCompleted,
+            filesTotal: info.filesTotal,
+            loadedBytes: info.loadedBytes,
+            totalBytes: info.totalBytes,
+            speedBps: info.speedBps,
+            etaSeconds: info.etaSeconds,
+          });
+        },
+        this.abortController?.signal,
+      );
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") throw new AbortError();
+      const msg = (e as Error)?.message ?? String(e);
+      throw new Error(
+        `模型下载失败：${msg}。已下载部分已缓存，重试可断点续传。`,
+      );
+    }
+
+    // ---- 阶段2：monkey-patch fetch，让 Transformers.js 从 IndexedDB 加载 ----
+    onProgress?.({
+      stage: "loading",
+      progress: 95,
+      message: "从本地缓存加载模型…",
+    });
+
+    const originalFetch = globalThis.fetch;
+    const patchFetch = () => {
+      globalThis.fetch = (async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url;
+        // 拦截 HF / hf-mirror 对该 repo 的请求，从 IndexedDB 缓存返回
+        if (url.includes(`/resolve/main/`)) {
+          // 提取 repo 和文件路径：host/repo/resolve/main/path
+          const match = url.match(/\/([^/]+\/[^/]+)\/resolve\/main\/(.+?)(?:\?|$)/);
+          if (match) {
+            const fileRepo = match[1];
+            const filePath = match[2];
+            const cacheKey = `${fileRepo}/${filePath}`;
+            const cached = cachedFiles.get(cacheKey);
+            if (cached) {
+              return new Response(cached, {
+                status: 200,
+                headers: { "Content-Type": "application/octet-stream" },
+              });
+            }
+          }
+        }
+        // 其他请求走原始 fetch
+        return originalFetch(input as RequestInfo, init);
+      }) as typeof fetch;
+    };
+    patchFetch();
 
     let generator: TfModule;
     try {
       generator = await tf.pipeline("text-generation", config.repo, {
         dtype,
         device: this.device,
-        progress_callback: progressCallback,
       });
     } catch (e) {
       if (e instanceof EngineLoadError) throw e;
       const msg = (e as Error)?.message ?? String(e);
-      // 常见模型下载失败：网络中断 / 404 / CORS
-      if (/fetch|network|Failed to|404|CORS|ERR_|locate/i.test(msg)) {
-        throw new Error(
-          `模型下载失败：${msg}。可尝试切换「国内镜像」源后重试。`,
-        );
-      }
       throw new Error(`模型加载失败：${msg}`);
+    } finally {
+      // 恢复原始 fetch
+      globalThis.fetch = originalFetch;
     }
 
     onProgress?.({ stage: "ready", progress: 100, message: "模型就绪" });
@@ -338,7 +272,7 @@ export class LocalProvider implements ChatProvider {
   async chat(params: ChatParams): Promise<ChatResult> {
     this.aborted = false;
     const loaded = await this.ensureLoaded(params.onProgress);
-    const tf = await loadTransformers(this.mirror);
+    const tf = await loadTransformers();
 
     // 通知进入"思考中"阶段：首次推理需预热（WebGPU shader 编译 / WASM 优化），
     // 可能数秒到数十秒才有第一个 token，需让用户知道在工作。

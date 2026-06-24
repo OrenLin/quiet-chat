@@ -58,12 +58,12 @@ export const DEFAULT_SETTINGS: Settings = {
   keyIv: null,
   mode: "deepseek",
   cloudModel: "deepseek-chat",
-  localModel: "qwen3-0.6b-q4",
+  localModel: "qwen2.5-0.5b-q4", // 默认最小模型，下载最快
   temperature: 0.7,
   maxTokens: 2048,
   topP: 0.95,
   onlineSearch: false,
-  modelMirror: "auto",
+  modelMirror: "hf-mirror", // 默认国内镜像，中国境内下载更快
 };
 
 export type BackendType = "webgpu" | "wasm" | "unknown";
