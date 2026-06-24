@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Copy, Check, RotateCcw, User, AlertTriangle } from "lucide-react";
 import type { Message } from "@/lib/types";
 import { Markdown } from "@/components/ui/Markdown";
+import { useStore } from "@/store/useStore";
 import { cn } from "@/lib/utils";
 
 interface MessageBubbleProps {
@@ -20,6 +21,10 @@ export function MessageBubble({
 }: MessageBubbleProps) {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === "user";
+  // 本地模型"思考中"提示文字（预热/生成中）
+  const localMessage = useStore((s) => s.localMessage);
+  const localStatus = useStore((s) => s.localStatus);
+  const mode = useStore((s) => s.settings.mode);
 
   const copy = async () => {
     try {
@@ -30,6 +35,12 @@ export function MessageBubble({
       /* ignore */
     }
   };
+
+  // 流式且内容为空时，本地模式显示 localMessage 作为思考状态
+  const thinkingText =
+    isStreaming && !message.content && mode === "local" && localStatus === "loading"
+      ? localMessage || "正在思考…"
+      : null;
 
   return (
     <div className="group animate-fade-up px-1">
@@ -85,7 +96,7 @@ export function MessageBubble({
                 <Markdown content={message.content} />
               </div>
             ) : (
-              <ThinkingDots />
+              <ThinkingDots text={thinkingText} />
             )}
           </div>
 
@@ -135,16 +146,21 @@ function Spark({ size, strokeWidth }: { size: number; strokeWidth: number }) {
   );
 }
 
-function ThinkingDots() {
+function ThinkingDots({ text }: { text: string | null }) {
   return (
-    <div className="flex items-center gap-1.5 py-1">
-      {[0, 1, 2].map((i) => (
-        <span
-          key={i}
-          className="w-1.5 h-1.5 rounded-full bg-content-faint animate-pulse"
-          style={{ animationDelay: `${i * 0.18}s`, animationDuration: "1s" }}
-        />
-      ))}
+    <div className="flex items-center gap-2 py-1">
+      <div className="flex items-center gap-1.5">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className="w-1.5 h-1.5 rounded-full bg-content-faint animate-pulse"
+            style={{ animationDelay: `${i * 0.18}s`, animationDuration: "1s" }}
+          />
+        ))}
+      </div>
+      {text && (
+        <span className="text-xs text-content-faint animate-pulse">{text}</span>
+      )}
     </div>
   );
 }

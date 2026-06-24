@@ -32,7 +32,7 @@ import {
 import { DeepSeekProvider } from "@/lib/providers/deepseek";
 import { LocalProvider } from "@/lib/providers/local";
 import { AbortError, type ProgressInfo } from "@/lib/providers/types";
-import { detectWebGPU } from "@/lib/models";
+import { pickDevice } from "@/lib/models";
 
 // ---- 模块级密钥材料（仅内存） ----
 let cryptoKey: CryptoKey | null = null;
@@ -178,9 +178,9 @@ export const useStore = create<ChatState>((set, get) => ({
         /* 忽略 */
       }
     }
-    // 检测后端
-    const gpu = await detectWebGPU();
-    set({ backend: gpu ? "webgpu" : "wasm" });
+    // 检测后端（iOS 强制 WASM，其他优先 WebGPU）
+    const { device } = await pickDevice();
+    set({ backend: device === "webgpu" ? "webgpu" : "wasm" });
   },
 
   createSession: async (mode) => {

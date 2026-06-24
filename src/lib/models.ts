@@ -68,3 +68,27 @@ export async function detectWebGPU(): Promise<boolean> {
 export function detectWASM(): boolean {
   return typeof WebAssembly !== "undefined";
 }
+
+/** 检测是否为 iOS / iPadOS（iPadOS 13+ 伪装为 Mac，需结合触屏判断） */
+export function isIOS(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  const isIPadOS =
+    /Macintosh/.test(ua) && typeof document !== "undefined" && "ontouchend" in document;
+  return /iPhone|iPad|iPod/.test(ua) || isIPadOS;
+}
+
+/**
+ * 选择推理后端：iOS 强制 WASM（WebGPU 在 iOS Safari 上对 ONNX 模型支持不稳定，
+ * 易出现 shader 编译失败或内存崩溃）；其他平台优先 WebGPU 降级 WASM。
+ */
+export async function pickDevice(): Promise<{ device: string; reason: string }> {
+  if (isIOS()) {
+    return { device: "wasm", reason: "iOS 使用 WASM（兼容性最佳）" };
+  }
+  const hasWebGPU = await detectWebGPU();
+  if (hasWebGPU) {
+    return { device: "webgpu", reason: "WebGPU 加速" };
+  }
+  return { device: "wasm", reason: "WASM（未检测到 WebGPU）" };
+}

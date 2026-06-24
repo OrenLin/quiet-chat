@@ -8,7 +8,7 @@
 
 import type { TokenUsage } from "../types";
 import { estimateTokens } from "../crypto";
-import { detectWebGPU, getModelById } from "../models";
+import { getModelById, pickDevice } from "../models";
 import {
   type ChatParams,
   type ChatProvider,
@@ -168,10 +168,11 @@ export class LocalProvider implements ChatProvider {
 
     const config = getModelById(this.modelId);
 
-    // 选择后端：优先 WebGPU，降级 WASM
+    // 选择后端：iOS 强制 WASM，其他优先 WebGPU 降级 WASM
     onProgress?.({ stage: "init", progress: 5, message: "检测推理后端…" });
-    const hasWebGPU = await detectWebGPU();
-    this.device = hasWebGPU ? "webgpu" : "wasm";
+    const { device, reason } = await pickDevice();
+    this.device = device;
+    onProgress?.({ stage: "init", progress: 8, message: reason });
 
     onProgress?.({
       stage: "downloading",
@@ -326,20 +327,51 @@ export class LocalProvider implements ChatProvider {
     const loaded = await this.ensureLoaded(params.onProgress);
     const tf = await loadTransformers(this.mirror);
 
+    // 通知进入"思考中"阶段：首次推理需预热（WebGPU shader 编译 / WASM 优化），
+    // 可能数秒到数十秒才有第一个 token，需让用户知道在工作。
+    params.onProgress?.({
+      stage: "loading",
+      progress: 99,
+      message: "正在思考…",
+    });
+
     let content = "";
     let firstTokenTime = 0;
     let lastTokenTime = 0;
+    let warmedUp = false;
 
     const streamer = new tf.TextStreamer(loaded.generator.tokenizer, {
       skip_prompt: true,
       callback_function: (text: string) => {
         if (this.aborted) throw new AbortError();
-        if (!firstTokenTime) firstTokenTime = performance.now();
+        if (!firstTokenTime) {
+          firstTokenTime = performance.now();
+          warmedUp = true;
+          // 第一个 token 到达，切换为"生成中"
+          params.onProgress?.({
+            stage: "loading",
+            progress: 99,
+            message: "生成中…",
+          });
+        }
         lastTokenTime = performance.now();
         content += text;
         params.onToken?.(text);
       },
     });
+
+    // 预热期间定期更新提示，避免用户以为卡住
+    const warmupTimer = setInterval(() => {
+      if (warmedUp || this.aborted) {
+        clearInterval(warmupTimer);
+        return;
+      }
+      params.onProgress?.({
+        stage: "loading",
+        progress: 99,
+        message: "正在思考…（模型预热中，请稍候）",
+      });
+    }, 4000);
 
     try {
       await loaded.generator(params.messages, {
@@ -355,6 +387,8 @@ export class LocalProvider implements ChatProvider {
       } else {
         throw e;
       }
+    } finally {
+      clearInterval(warmupTimer);
     }
 
     const promptTokens = estimateTokens(
