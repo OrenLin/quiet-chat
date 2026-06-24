@@ -298,10 +298,23 @@ export class LocalProvider implements ChatProvider {
       message: "加载模型到内存…",
     });
 
+    // 根据后端选择 dtype：WASM 对 q4 支持不稳定（可能缺算子），降级用 q8；
+    // WebGPU 原生支持 q4，体积更小下载更快。
+    // 用户若显式选了 q8 模型则尊重其选择。
+    let dtype = config.dtype;
+    if (this.device === "wasm" && config.dtype === "q4") {
+      dtype = "q8";
+      onProgress?.({
+        stage: "loading",
+        progress: 99,
+        message: "WASM 后端使用 Q8 精度（兼容性最佳）…",
+      });
+    }
+
     let generator: TfModule;
     try {
       generator = await tf.pipeline("text-generation", config.repo, {
-        dtype: config.dtype,
+        dtype,
         device: this.device,
         progress_callback: progressCallback,
       });
@@ -309,7 +322,7 @@ export class LocalProvider implements ChatProvider {
       if (e instanceof EngineLoadError) throw e;
       const msg = (e as Error)?.message ?? String(e);
       // 常见模型下载失败：网络中断 / 404 / CORS
-      if (/fetch|network|Failed to|404|CORS|ERR_/i.test(msg)) {
+      if (/fetch|network|Failed to|404|CORS|ERR_|locate/i.test(msg)) {
         throw new Error(
           `模型下载失败：${msg}。可尝试切换「国内镜像」源后重试。`,
         );

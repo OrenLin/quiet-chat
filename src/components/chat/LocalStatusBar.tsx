@@ -143,11 +143,13 @@ export function LocalStatusBar() {
                 文件 {filesCompleted}/{filesTotal}
               </span>
             )}
-            {totalBytes > 0 && (
-              <span>
-                {formatBytes(loadedBytes)} / {formatBytes(totalBytes)}
-              </span>
-            )}
+            {/* 已下载字节：优先用实际 total，回退到模型估算大小 */}
+            <span>
+              {formatBytes(loadedBytes)}
+              {totalBytes > 0
+                ? ` / ${formatBytes(totalBytes)}`
+                : ` / ~${formatBytes(config.approxBytes)}`}
+            </span>
             {speedBps > 0 && (
               <span className="text-cloud">{formatSpeed(speedBps)}</span>
             )}

@@ -17,7 +17,7 @@ export const LOCAL_MODELS: LocalModelConfig[] = [
   {
     id: "qwen2.5-0.5b-q4",
     name: "Qwen2.5-0.5B",
-    repo: "Qwen/Qwen2.5-0.5B-Instruct",
+    repo: "onnx-community/Qwen2.5-0.5B-Instruct",
     dtype: "q4",
     sizeLabel: "~250MB",
     approxBytes: 250 * 1024 * 1024,
@@ -27,7 +27,7 @@ export const LOCAL_MODELS: LocalModelConfig[] = [
   {
     id: "qwen3-0.6b-q4",
     name: "Qwen3-0.6B (Q4)",
-    repo: "Qwen/Qwen3-0.6B",
+    repo: "onnx-community/Qwen3-0.6B",
     dtype: "q4",
     sizeLabel: "~400MB",
     approxBytes: 400 * 1024 * 1024,
@@ -38,7 +38,7 @@ export const LOCAL_MODELS: LocalModelConfig[] = [
   {
     id: "qwen3-0.6b-q8",
     name: "Qwen3-0.6B (Q8)",
-    repo: "Qwen/Qwen3-0.6B",
+    repo: "onnx-community/Qwen3-0.6B",
     dtype: "q8",
     sizeLabel: "~600MB",
     approxBytes: 600 * 1024 * 1024,
