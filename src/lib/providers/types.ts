@@ -17,9 +17,20 @@ export interface ChatParams {
 }
 
 export interface ProgressInfo {
-  stage: "downloading" | "loading" | "ready";
-  progress: number; // 0-100
+  /** init=初始化引擎, downloading=下载权重, loading=加载到内存, ready=就绪 */
+  stage: "init" | "downloading" | "loading" | "ready";
+  progress: number; // 0-100 总进度
   message?: string;
+  // 文件级详情（仅 downloading 阶段）
+  currentFile?: string;
+  fileProgress?: number; // 当前文件 0-100
+  filesCompleted?: number;
+  filesTotal?: number;
+  // 字节与速度（仅 downloading 阶段）
+  loadedBytes?: number;
+  totalBytes?: number;
+  speedBps?: number; // bytes/sec
+  etaSeconds?: number;
 }
 
 export interface ChatResult {

@@ -45,11 +45,13 @@ function uid(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function getLocalProvider(modelId: string): LocalProvider {
+function getLocalProvider(modelId: string, mirror: "auto" | "hf" | "hf-mirror" = "auto"): LocalProvider {
   if (!localProvider) {
     localProvider = new LocalProvider(modelId);
+    localProvider.setMirror(mirror);
   } else {
     localProvider.setModel(modelId);
+    localProvider.setMirror(mirror);
   }
   return localProvider;
 }
@@ -89,6 +91,15 @@ interface ChatState {
   backend: BackendType;
   tokPerSec: number;
   downloadProgress: DownloadProgress | null;
+  // 详细下载信息
+  currentFile: string | null;
+  fileProgress: number;
+  filesCompleted: number;
+  filesTotal: number;
+  loadedBytes: number;
+  totalBytes: number;
+  speedBps: number;
+  etaSeconds: number;
 
   // 初始化
   hydrate: () => Promise<void>;
@@ -141,6 +152,14 @@ export const useStore = create<ChatState>((set, get) => ({
   backend: "unknown",
   tokPerSec: 0,
   downloadProgress: null,
+  currentFile: null,
+  fileProgress: 0,
+  filesCompleted: 0,
+  filesTotal: 0,
+  loadedBytes: 0,
+  totalBytes: 0,
+  speedBps: 0,
+  etaSeconds: 0,
 
   hydrate: async () => {
     const settings = loadSettings();
@@ -423,19 +442,41 @@ export const useStore = create<ChatState>((set, get) => ({
   preloadLocalModel: async () => {
     const { settings } = get();
     if (settings.mode !== "local") return;
-    const provider = getLocalProvider(settings.localModel);
+    const provider = getLocalProvider(settings.localModel, settings.modelMirror);
     if (await provider.isReady()) {
       set({ localStatus: "ready", localProgress: 100, localMessage: "模型就绪" });
       return;
     }
-    set({ localStatus: "downloading", localProgress: 0, localMessage: "准备下载…" });
+    set({
+      localStatus: "downloading",
+      localProgress: 0,
+      localMessage: "准备下载…",
+      currentFile: null,
+      fileProgress: 0,
+      filesCompleted: 0,
+      filesTotal: 0,
+      loadedBytes: 0,
+      totalBytes: 0,
+      speedBps: 0,
+      etaSeconds: 0,
+    });
     try {
       await provider.ensureLoaded((info: ProgressInfo) => {
-        if (info.stage === "downloading") {
+        if (info.stage === "init") {
+          set({ localStatus: "downloading", localMessage: info.message ?? "初始化…" });
+        } else if (info.stage === "downloading") {
           set({
             localStatus: "downloading",
             localProgress: info.progress,
             localMessage: info.message ?? "下载中…",
+            currentFile: info.currentFile ?? null,
+            fileProgress: info.fileProgress ?? 0,
+            filesCompleted: info.filesCompleted ?? 0,
+            filesTotal: info.filesTotal ?? 0,
+            loadedBytes: info.loadedBytes ?? 0,
+            totalBytes: info.totalBytes ?? 0,
+            speedBps: info.speedBps ?? 0,
+            etaSeconds: info.etaSeconds ?? 0,
           });
         } else if (info.stage === "loading") {
           set({ localStatus: "loading", localProgress: info.progress, localMessage: info.message ?? "加载中…" });
@@ -502,7 +543,7 @@ async function runChat(
         onUsage: (usage) => set({ tokenUsage: usage }),
       });
     } else {
-      const provider = getLocalProvider(settings.localModel);
+      const provider = getLocalProvider(settings.localModel, settings.modelMirror);
       set({ localStatus: "loading", localMessage: "推理中…" });
       result = await provider.chat({
         messages: chatMessages,
@@ -510,8 +551,22 @@ async function runChat(
         maxTokens: settings.maxTokens,
         topP: settings.topP,
         onProgress: (info: ProgressInfo) => {
-          if (info.stage === "downloading") {
-            set({ localStatus: "downloading", localProgress: info.progress, localMessage: info.message ?? "下载中…" });
+          if (info.stage === "init") {
+            set({ localStatus: "downloading", localMessage: info.message ?? "初始化…" });
+          } else if (info.stage === "downloading") {
+            set({
+              localStatus: "downloading",
+              localProgress: info.progress,
+              localMessage: info.message ?? "下载中…",
+              currentFile: info.currentFile ?? null,
+              fileProgress: info.fileProgress ?? 0,
+              filesCompleted: info.filesCompleted ?? 0,
+              filesTotal: info.filesTotal ?? 0,
+              loadedBytes: info.loadedBytes ?? 0,
+              totalBytes: info.totalBytes ?? 0,
+              speedBps: info.speedBps ?? 0,
+              etaSeconds: info.etaSeconds ?? 0,
+            });
           } else if (info.stage === "loading") {
             set({ localStatus: "loading", localProgress: info.progress, localMessage: info.message ?? "加载中…" });
           } else if (info.stage === "ready") {

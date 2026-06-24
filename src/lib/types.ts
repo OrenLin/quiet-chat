@@ -48,6 +48,8 @@ export interface Settings {
   maxTokens: number;
   topP: number;
   onlineSearch: boolean;
+  /** 本地模型下载镜像源：'auto' | 'hf' | 'hf-mirror' */
+  modelMirror: "auto" | "hf" | "hf-mirror";
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -61,6 +63,7 @@ export const DEFAULT_SETTINGS: Settings = {
   maxTokens: 2048,
   topP: 0.95,
   onlineSearch: false,
+  modelMirror: "auto",
 };
 
 export type BackendType = "webgpu" | "wasm" | "unknown";
