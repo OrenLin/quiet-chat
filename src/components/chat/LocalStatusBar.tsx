@@ -197,10 +197,10 @@ export function LocalStatusBar() {
               className="chip bg-cloud/15 text-cloud border border-cloud/30 hover:bg-cloud/25 transition shrink-0"
             >
               <RotateCcw size={11} />
-              继续下载（断点续传）
+              重试
             </button>
             <span className="text-content-faint text-2xs">
-              已下载部分已缓存，重试会从断点继续，无需从头开始
+              引擎失败请切换网络；模型失败请切换镜像源后重试
             </span>
           </div>
         </div>

@@ -1,15 +1,17 @@
 // 本地推理 Provider：Transformers.js 3 + ONNX Runtime Web（WebGPU/WASM）
 //
-// 说明：@huggingface/transformers 的 npm 包会拉入 onnxruntime-node 原生二进制，
-// 无法在浏览器构建中打包。因此这里通过 CDN 动态加载 ESM 版本（官方推荐用法），
-// 库代码本身可由 Service Worker 缓存以支持离线；模型权重缓存于 IndexedDB。
+// 采用 Transformers.js 官方推荐用法：
+// - env.remoteHost 指向 hf-mirror.com（中国加速）
+// - env.useBrowserCache = true，浏览器 Cache API 自动缓存，离线可用
+// - progress_callback 提供文件级下载进度
+// - 不再用自定义下载器/customCache/patch fetch（均不可靠）
 //
-// 中国加速：支持切换到 hf-mirror.com 镜像源下载模型权重。
+// 说明：@huggingface/transformers 的 npm 包会拉入 onnxruntime-node 原生二进制，
+// 无法在浏览器构建中打包。因此通过 CDN 动态加载 ESM 版本。
 
 import type { TokenUsage } from "../types";
 import { estimateTokens } from "../crypto";
 import { getModelById, pickDevice } from "../models";
-import { downloadModelFiles, createCustomCache } from "../modelDownloader";
 import {
   type ChatParams,
   type ChatProvider,
@@ -19,17 +21,23 @@ import {
 } from "./types";
 
 // Transformers.js 库的 CDN 源（按优先级降级，任一可用即可）
-// jsdelivr 在中国通常可用但偶发不稳定；esm.sh 与 unpkg 作为降级。
 const TRANSFORMERS_CDNS = [
   "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1",
   "https://esm.sh/@huggingface/transformers@3.8.1",
   "https://unpkg.com/@huggingface/transformers@3.8.1",
 ];
 
+// 模型权重镜像源
+const MIRROR_HOSTS = {
+  hf: "https://huggingface.co",
+  "hf-mirror": "https://hf-mirror.com",
+};
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type TfModule = any;
 
 let tfPromise: Promise<TfModule> | null = null;
+let currentRemoteHost: string = MIRROR_HOSTS["hf-mirror"];
 
 /** 引擎（Transformers.js 库）加载失败 —— 通常是 CDN 网络问题 */
 export class EngineLoadError extends Error {
@@ -50,21 +58,32 @@ function loadTransformers(): Promise<TfModule> {
       tried.push(cdn);
       try {
         const mod = await import(/* @vite-ignore */ cdn);
-        // 模型文件由自定义下载器缓存到 IndexedDB，通过 patch fetch 加载，
-        // 不使用 Transformers.js 自带的浏览器缓存（避免与 IndexedDB 重复）
+        // 官方推荐配置：
+        // - allowLocalModels=false：浏览器无文件系统，跳过本地查找
+        // - useBrowserCache=true：用 Cache API 自动缓存，离线可用
         mod.env.allowLocalModels = false;
-        mod.env.useBrowserCache = false;
+        mod.env.useBrowserCache = true;
+        mod.env.remoteHost = currentRemoteHost;
         return mod;
       } catch (e) {
         console.warn(`[transformers] CDN 加载失败: ${cdn}`, e);
       }
     }
-    // 全部失败：清空缓存以便下次重试
     tfPromise = null;
     throw new EngineLoadError(tried);
   })();
 
   return tfPromise;
+}
+
+/** 运行时切换镜像源（需在加载模型前调用） */
+function applyMirror(tf: TfModule, mirror: "auto" | "hf" | "hf-mirror") {
+  const host =
+    mirror === "hf"
+      ? MIRROR_HOSTS.hf
+      : MIRROR_HOSTS["hf-mirror"]; // auto 也默认用 hf-mirror
+  currentRemoteHost = host;
+  tf.env.remoteHost = host;
 }
 
 interface LoadedModel {
@@ -82,7 +101,6 @@ export class LocalProvider implements ChatProvider {
   private loadingPromise: Promise<LoadedModel> | null = null;
   private device: string = "wasm";
   private mirror: "auto" | "hf" | "hf-mirror" = "auto";
-  private abortController: AbortController | null = null;
 
   constructor(modelId: string) {
     this.modelId = modelId;
@@ -97,10 +115,7 @@ export class LocalProvider implements ChatProvider {
   }
 
   setMirror(mirror: "auto" | "hf" | "hf-mirror") {
-    if (mirror !== this.mirror) {
-      this.mirror = mirror;
-      // 已加载的模型需要重新加载以应用新镜像（仅未缓存时）
-    }
+    this.mirror = mirror;
   }
 
   async isReady(): Promise<boolean> {
@@ -113,7 +128,6 @@ export class LocalProvider implements ChatProvider {
 
   abort(): void {
     this.aborted = true;
-    this.abortController?.abort();
   }
 
   /** 加载（含首次下载）模型，带详细进度回调 */
@@ -124,7 +138,6 @@ export class LocalProvider implements ChatProvider {
     if (this.loadingPromise) return this.loadingPromise;
 
     this.aborted = false;
-    this.abortController = new AbortController();
     this.loadingPromise = this.doLoad(onProgress);
     try {
       this.loaded = await this.loadingPromise;
@@ -142,6 +155,8 @@ export class LocalProvider implements ChatProvider {
   ): Promise<LoadedModel> {
     onProgress?.({ stage: "init", progress: 0, message: "加载推理引擎…" });
     const tf = await loadTransformers();
+    // 应用镜像源
+    applyMirror(tf, this.mirror);
 
     const config = getModelById(this.modelId);
 
@@ -162,11 +177,10 @@ export class LocalProvider implements ChatProvider {
       });
     }
 
-    // ---- 阶段1：用自定义下载器预取文件到 IndexedDB（断点续传）----
     onProgress?.({
       stage: "downloading",
       progress: 0,
-      message: `准备下载 ${config.name}（${config.sizeLabel}）`,
+      message: `开始下载 ${config.name}（${config.sizeLabel}）`,
       filesCompleted: 0,
       filesTotal: 0,
       loadedBytes: 0,
@@ -175,72 +189,118 @@ export class LocalProvider implements ChatProvider {
       etaSeconds: 0,
     });
 
-    let cachedFiles: Map<string, Blob>;
-    try {
-      cachedFiles = await downloadModelFiles(
-        config.repo,
-        dtype,
-        this.mirror,
-        (info) => {
-          const shortName = info.file.split("/").pop() || info.file;
-          onProgress?.({
-            stage: "downloading",
-            progress: info.progress,
-            message: `下载 ${shortName}（${info.filesCompleted}/${info.filesTotal}）`,
-            currentFile: shortName,
-            fileProgress: info.fileProgress,
-            filesCompleted: info.filesCompleted,
-            filesTotal: info.filesTotal,
-            loadedBytes: info.loadedBytes,
-            totalBytes: info.totalBytes,
-            speedBps: info.speedBps,
-            etaSeconds: info.etaSeconds,
-          });
-        },
-        this.abortController?.signal,
-      );
-    } catch (e) {
-      if ((e as Error)?.name === "AbortError") throw new AbortError();
-      const msg = (e as Error)?.message ?? String(e);
-      throw new Error(
-        `模型下载失败：${msg}。已下载部分已缓存，重试可断点续传。`,
-      );
-    }
+    // 文件级进度跟踪（Transformers.js progress_callback 数据格式）
+    const fileMap = new Map<
+      string,
+      { progress: number; loaded: number; total: number }
+    >();
+    let lastSpeedTime = 0;
+    let lastSpeedLoaded = 0;
+    let speedBps = 0;
 
-    // ---- 阶段2：配置 customCache，让 Transformers.js 从 IndexedDB 加载 ----
-    // 用官方支持的 env.useCustomCache + env.customCache，比 patch fetch 可靠：
-    // Transformers.js 内部（含 ONNX Runtime Web Worker）都会走 customCache.match
+    const progressCallback = (info: {
+      status?: string;
+      file?: string;
+      name?: string;
+      progress?: number;
+      loaded?: number;
+      total?: number;
+    }) => {
+      const file = info.file || info.name;
+      const now = Date.now();
+
+      if (file && !fileMap.has(file)) {
+        fileMap.set(file, { progress: 0, loaded: 0, total: 0 });
+      }
+
+      if (file && typeof info.progress === "number") {
+        const fp = fileMap.get(file)!;
+        fp.progress = info.progress;
+        fp.loaded = info.loaded ?? fp.loaded;
+        fp.total = info.total ?? fp.total;
+
+        const totalLoaded = Array.from(fileMap.values()).reduce(
+          (s, f) => s + f.loaded,
+          0,
+        );
+        const totalBytes = Array.from(fileMap.values()).reduce(
+          (s, f) => s + f.total,
+          0,
+        );
+
+        // 速度采样（每 500ms）
+        if (now - lastSpeedTime > 500) {
+          if (lastSpeedTime > 0 && totalLoaded > lastSpeedLoaded) {
+            speedBps =
+              ((totalLoaded - lastSpeedLoaded) / (now - lastSpeedTime)) * 1000;
+          }
+          lastSpeedTime = now;
+          lastSpeedLoaded = totalLoaded;
+        }
+
+        const filesCompleted = Array.from(fileMap.values()).filter(
+          (f) => f.progress >= 100,
+        ).length;
+        const filesTotal = fileMap.size;
+
+        const overallProgress =
+          totalBytes > 0
+            ? Math.min(99, (totalLoaded / totalBytes) * 100)
+            : filesTotal > 0
+              ? Math.min(99, (filesCompleted / filesTotal) * 100)
+              : 0;
+
+        const etaSeconds =
+          speedBps > 0 && totalBytes > 0
+            ? Math.max(0, (totalBytes - totalLoaded) / speedBps)
+            : 0;
+
+        const shortName = file.split("/").pop() || file;
+
+        onProgress?.({
+          stage: "downloading",
+          progress: Math.round(overallProgress),
+          message: `下载 ${shortName}（${filesCompleted}/${filesTotal}）`,
+          currentFile: shortName,
+          fileProgress: Math.round(info.progress),
+          filesCompleted,
+          filesTotal,
+          loadedBytes: totalLoaded,
+          totalBytes: totalBytes > 0 ? totalBytes : undefined,
+          speedBps: speedBps > 0 ? speedBps : undefined,
+          etaSeconds,
+        });
+      }
+
+      if (info.status === "ready" || info.status === "done") {
+        if (file) {
+          const fp = fileMap.get(file);
+          if (fp) fp.progress = 100;
+        }
+      }
+    };
+
     onProgress?.({
       stage: "loading",
-      progress: 95,
-      message: "从本地缓存加载模型…",
+      progress: 99,
+      message: "加载模型到内存…",
     });
-
-    tf.env.useCustomCache = true;
-    tf.env.customCache = createCustomCache(cachedFiles);
-    // 禁用浏览器自带 Cache API，避免与 customCache 冲突
-    tf.env.useBrowserCache = false;
 
     let generator: TfModule;
     try {
-      // 加载超时检测：60 秒未完成则报错，避免卡死无反馈
-      const loadPromise = tf.pipeline("text-generation", config.repo, {
+      generator = await tf.pipeline("text-generation", config.repo, {
         dtype,
         device: this.device,
+        progress_callback: progressCallback,
       });
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => {
-          reject(
-            new Error(
-              "模型加载超时（60秒）。可能是缓存未命中导致尝试联网，请检查网络后重试。",
-            ),
-          );
-        }, 60000);
-      });
-      generator = await Promise.race([loadPromise, timeoutPromise]);
     } catch (e) {
       if (e instanceof EngineLoadError) throw e;
       const msg = (e as Error)?.message ?? String(e);
+      if (/fetch|network|Failed to|404|CORS|ERR_|locate/i.test(msg)) {
+        throw new Error(
+          `模型下载失败：${msg}。可尝试切换镜像源后重试。`,
+        );
+      }
       throw new Error(`模型加载失败：${msg}`);
     }
 
@@ -254,8 +314,7 @@ export class LocalProvider implements ChatProvider {
     const loaded = await this.ensureLoaded(params.onProgress);
     const tf = await loadTransformers();
 
-    // 通知进入"思考中"阶段：首次推理需预热（WebGPU shader 编译 / WASM 优化），
-    // 可能数秒到数十秒才有第一个 token，需让用户知道在工作。
+    // 通知进入"思考中"阶段：首次推理需预热，可能数秒到数十秒才有第一个 token
     params.onProgress?.({
       stage: "loading",
       progress: 99,
@@ -274,7 +333,6 @@ export class LocalProvider implements ChatProvider {
         if (!firstTokenTime) {
           firstTokenTime = performance.now();
           warmedUp = true;
-          // 第一个 token 到达，切换为"生成中"
           params.onProgress?.({
             stage: "loading",
             progress: 99,
@@ -318,43 +376,21 @@ export class LocalProvider implements ChatProvider {
       clearInterval(warmupTimer);
     }
 
-    const promptTokens = estimateTokens(
-      params.messages.map((m) => m.content).join(""),
-    );
-    const completionTokens = estimateTokens(content);
+    const elapsed = (lastTokenTime - firstTokenTime) / 1000;
+    const promptText = params.messages.map((m) => m.content).join("");
     const usage: TokenUsage = {
-      prompt: promptTokens,
-      completion: completionTokens,
-      total: promptTokens + completionTokens,
+      prompt: estimateTokens(promptText),
+      completion: estimateTokens(content),
+      total: 0,
     };
+    usage.total = usage.prompt + usage.completion;
 
-    const elapsedSec =
-      firstTokenTime && lastTokenTime
-        ? (lastTokenTime - firstTokenTime) / 1000
-        : 0;
-    const tokPerSec = elapsedSec > 0 ? completionTokens / elapsedSec : 0;
-
-    params.onUsage?.(usage);
-    if (tokPerSec > 0) {
-      params.onProgress?.({
-        stage: "ready",
-        progress: 100,
-        message: `${tokPerSec.toFixed(1)} tok/s`,
-      });
-    }
-
-    return { content, usage };
-  }
-
-  dispose(): void {
-    if (this.loaded) {
-      try {
-        this.loaded.generator?.dispose?.();
-      } catch {
-        /* ignore */
-      }
-      this.loaded = null;
-      this.loadingPromise = null;
-    }
+    return {
+      content,
+      usage: {
+        ...usage,
+        tokPerSec: elapsed > 0 ? usage.completion / elapsed : 0,
+      } as TokenUsage & { tokPerSec: number },
+    };
   }
 }
