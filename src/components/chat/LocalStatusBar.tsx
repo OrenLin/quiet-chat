@@ -168,11 +168,23 @@ export function LocalStatusBar() {
         </div>
       )}
 
-      {/* 加载中 */}
+      {/* 加载中（下载完成后的模型初始化阶段）*/}
       {status === "loading" && (
-        <div className="flex items-center gap-2">
-          <Loader2 size={12} className="animate-spin text-local shrink-0" />
-          <span className="text-content-muted">{message || "加载模型到内存…"}</span>
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2">
+            <Loader2 size={12} className="animate-spin text-local shrink-0" />
+            <span className="text-local font-medium flex-1">
+              {message || "加载模型到内存…"}
+            </span>
+            <span className="font-mono text-local shrink-0">99%</span>
+          </div>
+          {/* 加载阶段进度条（不确定动画，因无实际进度回调）*/}
+          <div className="h-1.5 rounded-full bg-ink-border overflow-hidden">
+            <div className="h-full bg-local/60 w-1/3 rounded-full animate-[loading-slide_1.5s_ease-in-out_infinite]" />
+          </div>
+          <div className="text-2xs text-content-faint">
+            下载已完成，正在初始化推理引擎。iOS 上首次加载可能需要 1-2 分钟，请勿关闭页面。
+          </div>
         </div>
       )}
 

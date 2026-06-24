@@ -71,6 +71,10 @@ export default {
           "0%": { backgroundPosition: "-200% 0" },
           "100%": { backgroundPosition: "200% 0" },
         },
+        "loading-slide": {
+          "0%": { transform: "translateX(-100%)" },
+          "100%": { transform: "translateX(400%)" },
+        },
       },
       animation: {
         "fade-up": "fade-up 0.35s cubic-bezier(0.22,1,0.36,1) both",
@@ -78,6 +82,7 @@ export default {
         "pulse-ring": "pulse-ring 1.4s ease-out infinite",
         "spin-slow": "spin-slow 1.1s linear infinite",
         shimmer: "shimmer 2.2s linear infinite",
+        "loading-slide": "loading-slide 1.5s ease-in-out infinite",
       },
     },
   },

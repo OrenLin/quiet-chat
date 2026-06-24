@@ -283,16 +283,45 @@ export class LocalProvider implements ChatProvider {
     onProgress?.({
       stage: "loading",
       progress: 99,
-      message: "加载模型到内存…",
+      message: "下载完成，正在加载模型到内存…",
     });
+
+    // 加载阶段心跳：pipeline 下载完后进入 ONNX Runtime 初始化（无进度回调），
+    // 可能耗时 30-120 秒（iOS WASM 尤其慢），定期更新提示避免用户以为卡死
+    let loadingHints = 0;
+    const loadingHintMessages = [
+      "下载完成，正在加载模型到内存…",
+      "正在初始化推理引擎…（首次较慢，请耐心等待）",
+      "正在编译模型算子…（iOS 上可能需要 1-2 分钟）",
+      "仍在加载中…如果超过 3 分钟可点重试",
+    ];
+    const loadingHeartbeat = setInterval(() => {
+      loadingHints = Math.min(loadingHints + 1, loadingHintMessages.length - 1);
+      onProgress?.({
+        stage: "loading",
+        progress: 99,
+        message: loadingHintMessages[loadingHints],
+      });
+    }, 15000);
 
     let generator: TfModule;
     try {
-      generator = await tf.pipeline("text-generation", config.repo, {
+      // 加载超时检测：180 秒未完成则报错
+      const loadPromise = tf.pipeline("text-generation", config.repo, {
         dtype,
         device: this.device,
         progress_callback: progressCallback,
       });
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(
+            new Error(
+              "模型加载超时（3分钟）。可能是网络中断或内存不足，请重试。",
+            ),
+          );
+        }, 180000);
+      });
+      generator = await Promise.race([loadPromise, timeoutPromise]);
     } catch (e) {
       if (e instanceof EngineLoadError) throw e;
       const msg = (e as Error)?.message ?? String(e);
@@ -302,6 +331,8 @@ export class LocalProvider implements ChatProvider {
         );
       }
       throw new Error(`模型加载失败：${msg}`);
+    } finally {
+      clearInterval(loadingHeartbeat);
     }
 
     onProgress?.({ stage: "ready", progress: 100, message: "模型就绪" });
