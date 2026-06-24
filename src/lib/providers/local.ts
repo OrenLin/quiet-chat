@@ -9,7 +9,7 @@
 import type { TokenUsage } from "../types";
 import { estimateTokens } from "../crypto";
 import { getModelById, pickDevice } from "../models";
-import { downloadModelFiles } from "../modelDownloader";
+import { downloadModelFiles, createCustomCache } from "../modelDownloader";
 import {
   type ChatParams,
   type ChatProvider,
@@ -207,61 +207,41 @@ export class LocalProvider implements ChatProvider {
       );
     }
 
-    // ---- 阶段2：monkey-patch fetch，让 Transformers.js 从 IndexedDB 加载 ----
+    // ---- 阶段2：配置 customCache，让 Transformers.js 从 IndexedDB 加载 ----
+    // 用官方支持的 env.useCustomCache + env.customCache，比 patch fetch 可靠：
+    // Transformers.js 内部（含 ONNX Runtime Web Worker）都会走 customCache.match
     onProgress?.({
       stage: "loading",
       progress: 95,
       message: "从本地缓存加载模型…",
     });
 
-    const originalFetch = globalThis.fetch;
-    const patchFetch = () => {
-      globalThis.fetch = (async (
-        input: RequestInfo | URL,
-        init?: RequestInit,
-      ): Promise<Response> => {
-        const url =
-          typeof input === "string"
-            ? input
-            : input instanceof URL
-              ? input.href
-              : input.url;
-        // 拦截 HF / hf-mirror 对该 repo 的请求，从 IndexedDB 缓存返回
-        if (url.includes(`/resolve/main/`)) {
-          // 提取 repo 和文件路径：host/repo/resolve/main/path
-          const match = url.match(/\/([^/]+\/[^/]+)\/resolve\/main\/(.+?)(?:\?|$)/);
-          if (match) {
-            const fileRepo = match[1];
-            const filePath = match[2];
-            const cacheKey = `${fileRepo}/${filePath}`;
-            const cached = cachedFiles.get(cacheKey);
-            if (cached) {
-              return new Response(cached, {
-                status: 200,
-                headers: { "Content-Type": "application/octet-stream" },
-              });
-            }
-          }
-        }
-        // 其他请求走原始 fetch
-        return originalFetch(input as RequestInfo, init);
-      }) as typeof fetch;
-    };
-    patchFetch();
+    tf.env.useCustomCache = true;
+    tf.env.customCache = createCustomCache(cachedFiles);
+    // 禁用浏览器自带 Cache API，避免与 customCache 冲突
+    tf.env.useBrowserCache = false;
 
     let generator: TfModule;
     try {
-      generator = await tf.pipeline("text-generation", config.repo, {
+      // 加载超时检测：60 秒未完成则报错，避免卡死无反馈
+      const loadPromise = tf.pipeline("text-generation", config.repo, {
         dtype,
         device: this.device,
       });
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(
+            new Error(
+              "模型加载超时（60秒）。可能是缓存未命中导致尝试联网，请检查网络后重试。",
+            ),
+          );
+        }, 60000);
+      });
+      generator = await Promise.race([loadPromise, timeoutPromise]);
     } catch (e) {
       if (e instanceof EngineLoadError) throw e;
       const msg = (e as Error)?.message ?? String(e);
       throw new Error(`模型加载失败：${msg}`);
-    } finally {
-      // 恢复原始 fetch
-      globalThis.fetch = originalFetch;
     }
 
     onProgress?.({ stage: "ready", progress: 100, message: "模型就绪" });

@@ -316,3 +316,52 @@ export async function isModelCached(
   }
   return true;
 }
+
+/**
+ * 创建自定义缓存对象（实现 Cache API 的 match/put），
+ * 供 Transformers.js 的 env.useCustomCache + env.customCache 使用。
+ *
+ * Transformers.js 加载模型时会调用 customCache.match(request)，
+ * 命中则返回 Response（不走网络），未命中则走网络并调用 put 缓存。
+ * 我们用 IndexedDB 预存的文件作为缓存源，让 Transformers.js 完全从本地加载。
+ */
+export function createCustomCache(
+  cachedFiles: Map<string, Blob>,
+): Cache {
+  return {
+    match: async (request: RequestInfo | URL) => {
+      const url =
+        typeof request === "string"
+          ? request
+          : request instanceof URL
+            ? request.href
+            : request.url;
+      // 匹配 HF / hf-mirror 的 resolve/main/path 请求
+      const match = url.match(/\/([^/]+\/[^/]+)\/resolve\/main\/(.+?)(?:\?|$)/);
+      if (match) {
+        const repo = match[1];
+        const filePath = match[2];
+        const cacheKey = `${repo}/${filePath}`;
+        const blob = cachedFiles.get(cacheKey);
+        if (blob) {
+          return new Response(blob, {
+            status: 200,
+            headers: { "Content-Type": "application/octet-stream" },
+          });
+        }
+      }
+      // 未命中返回 undefined（Transformers.js 会走网络）
+      return undefined as unknown as Response;
+    },
+    put: async () => {
+      // 我们已用自定义下载器管理缓存，put 空实现即可
+      return undefined as unknown as Response;
+    },
+    // 以下方法 Cache API 要求但 Transformers.js 不用，空实现
+    add: async () => {},
+    addAll: async () => {},
+    delete: async () => false as boolean,
+    keys: async () => [] as Request[],
+    matchAll: async () => [] as Response[],
+  } as unknown as Cache;
+}
