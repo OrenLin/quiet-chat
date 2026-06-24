@@ -1,5 +1,4 @@
-// 推理参数区：温度、最大 Token、Top-P
-import { Thermometer, Hash, Percent } from "lucide-react";
+// 推理参数区：温度、最大 Token、Top-P；xAI 风格
 import { useStore } from "@/store/useStore";
 
 export function ParamsSection() {
@@ -9,16 +8,14 @@ export function ParamsSection() {
   const updateSettings = useStore((s) => s.updateSettings);
 
   return (
-    <section className="card p-5">
-      <h2 className="font-display font-semibold mb-1">推理参数</h2>
-      <p className="text-xs text-content-muted mb-4">
-        云端与本地共用。本地模型受参数能力限制，效果可能不如云端。
-      </p>
+    <section>
+      <div className="mb-4">
+        <span className="eyebrow">[ PARAMETERS ]</span>
+      </div>
 
-      <div className="space-y-5">
+      <div className="space-y-8">
         <Slider
-          icon={<Thermometer size={14} />}
-          label="温度"
+          label="TEMPERATURE"
           hint="越高越随机创意，越低越确定"
           value={temperature}
           min={0}
@@ -27,8 +24,7 @@ export function ParamsSection() {
           onChange={(v) => updateSettings({ temperature: v })}
         />
         <Slider
-          icon={<Percent size={14} />}
-          label="Top-P"
+          label="TOP-P"
           hint="核采样阈值"
           value={topP}
           min={0.1}
@@ -37,8 +33,7 @@ export function ParamsSection() {
           onChange={(v) => updateSettings({ topP: v })}
         />
         <Slider
-          icon={<Hash size={14} />}
-          label="最大 Token"
+          label="MAX TOKENS"
           hint="单次回复上限"
           value={maxTokens}
           min={256}
@@ -53,7 +48,6 @@ export function ParamsSection() {
 }
 
 interface SliderProps {
-  icon: React.ReactNode;
   label: string;
   hint: string;
   value: number;
@@ -65,7 +59,6 @@ interface SliderProps {
 }
 
 function Slider({
-  icon,
   label,
   hint,
   value,
@@ -77,12 +70,9 @@ function Slider({
 }: SliderProps) {
   return (
     <div>
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="flex items-center gap-1.5 text-sm text-content">
-          {icon}
-          {label}
-        </span>
-        <span className="font-mono text-sm text-cloud">
+      <div className="flex items-center justify-between mb-3">
+        <span className="eyebrow">{label}</span>
+        <span className="font-mono text-sm text-stellar" style={{ letterSpacing: "0.05em" }}>
           {integer ? value : value.toFixed(2)}
         </span>
       </div>
@@ -93,9 +83,10 @@ function Slider({
         step={step}
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
-        className="w-full accent-cloud h-1.5 cursor-pointer"
+        className="w-full h-px cursor-pointer appearance-none bg-graphite accent-stellar"
+        style={{ height: "1px" }}
       />
-      <p className="text-2xs text-content-faint mt-1">{hint}</p>
+      <p className="text-2xs text-ash mt-2" style={{ letterSpacing: "-0.3px" }}>{hint}</p>
     </div>
   );
 }

@@ -1,9 +1,8 @@
-// 单条消息气泡：用户/助手区分，Markdown 渲染，流式光标，复制
-import { useState } from "react";
+// 单条消息：用户/助手区分，Markdown 渲染，流式文字光效，复制
+import { useState, useRef, useEffect, memo } from "react";
 import { Copy, Check, RotateCcw, User, AlertTriangle } from "lucide-react";
 import type { Message } from "@/lib/types";
 import { Markdown } from "@/components/ui/Markdown";
-import { useStore } from "@/store/useStore";
 import { cn } from "@/lib/utils";
 
 interface MessageBubbleProps {
@@ -13,7 +12,7 @@ interface MessageBubbleProps {
   isLast: boolean;
 }
 
-export function MessageBubble({
+function MessageBubbleBase({
   message,
   isStreaming,
   onRegenerate,
@@ -21,10 +20,6 @@ export function MessageBubble({
 }: MessageBubbleProps) {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === "user";
-  // 本地模型"思考中"提示文字（预热/生成中）
-  const localMessage = useStore((s) => s.localMessage);
-  const localStatus = useStore((s) => s.localStatus);
-  const mode = useStore((s) => s.settings.mode);
 
   const copy = async () => {
     try {
@@ -36,95 +31,109 @@ export function MessageBubble({
     }
   };
 
-  // 流式且内容为空时，本地模式显示 localMessage 作为思考状态
-  const thinkingText =
-    isStreaming && !message.content && mode === "local" && localStatus === "loading"
-      ? localMessage || "正在思考…"
-      : null;
-
   return (
-    <div className="group animate-fade-up px-1">
-      <div
-        className={cn(
-          "flex gap-3 sm:gap-4",
-          isUser ? "flex-row-reverse" : "flex-row",
-        )}
-      >
-        {/* 头像 */}
+    <div className="group animate-fade-up">
+      <div className="flex gap-3 sm:gap-4">
+        {/* 头像：极简方形，hairline 边框 */}
         <div
           className={cn(
-            "shrink-0 w-8 h-8 rounded-xl flex items-center justify-center border mt-0.5",
+            "shrink-0 w-7 h-7 flex items-center justify-center border mt-0.5",
             isUser
-              ? "bg-cloud/10 border-cloud/30 text-cloud"
+              ? "border-stellar text-stellar"
               : message.error
-                ? "bg-danger/10 border-danger/30 text-danger"
-                : "bg-ink-raised border-ink-border text-local",
+                ? "border-danger text-danger"
+                : "border-graphite text-stellar",
           )}
         >
           {isUser ? (
-            <User size={15} strokeWidth={2} />
+            <User size={13} strokeWidth={1.5} />
           ) : message.error ? (
-            <AlertTriangle size={15} strokeWidth={2} />
+            <AlertTriangle size={13} strokeWidth={1.5} />
           ) : (
-            <Spark size={15} strokeWidth={2} />
+            <Spark size={13} strokeWidth={1.5} />
           )}
         </div>
 
         {/* 内容 */}
-        <div
-          className={cn(
-            "min-w-0 flex-1 max-w-[calc(100%-3rem)]",
-            isUser ? "flex flex-col items-end" : "flex flex-col items-start",
-          )}
-        >
-          <div
-            className={cn(
-              "rounded-2xl px-4 py-3",
-              isUser
-                ? "bg-cloud/8 border border-cloud/20 text-content"
-                : message.error
-                  ? "bg-danger/8 border border-danger/20"
-                  : "bg-ink-raised border border-ink-border",
-            )}
-          >
+        <div className="min-w-0 flex-1 max-w-[calc(100%-2.75rem)]">
+          {/* 角色标签：mono eyebrow */}
+          <div className="mb-1.5">
+            <span className="eyebrow">
+              {isUser ? "[ YOU ]" : message.error ? "[ ERROR ]" : "[ GROK ]"}
+            </span>
+          </div>
+
+          {/* 消息体：无气泡、无填充，仅排版 */}
+          <div className="text-stellar">
             {isUser ? (
               <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">
                 {message.content}
               </p>
             ) : message.content ? (
-              <div className={isStreaming ? "stream-cursor" : ""}>
+              isStreaming ? (
+                <StreamingContent content={message.content} />
+              ) : (
                 <Markdown content={message.content} />
-              </div>
+              )
             ) : (
-              <ThinkingDots text={thinkingText} />
+              <ThinkingDots />
             )}
           </div>
 
-          {/* 操作栏 */}
+          {/* 操作栏：ghost pill 风格 */}
           {!isStreaming && message.content && !message.error && (
-            <div className="flex items-center gap-1 mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="flex items-center gap-1 mt-2.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
               <button
                 onClick={copy}
-                className="btn-ghost !px-2 !py-1 text-2xs text-content-faint hover:text-content"
+                className="inline-flex items-center gap-1.5 rounded-pill border border-graphite px-2.5 py-1 text-2xs text-ash hover:text-stellar hover:border-smoke transition"
                 title="复制"
               >
-                {copied ? <Check size={12} /> : <Copy size={12} />}
-                {copied ? "已复制" : "复制"}
+                {copied ? <Check size={11} /> : <Copy size={11} />}
+                <span className="font-mono">{copied ? "COPIED" : "COPY"}</span>
               </button>
               {!isUser && isLast && onRegenerate && (
                 <button
                   onClick={onRegenerate}
-                  className="btn-ghost !px-2 !py-1 text-2xs text-content-faint hover:text-content"
+                  className="inline-flex items-center gap-1.5 rounded-pill border border-graphite px-2.5 py-1 text-2xs text-ash hover:text-stellar hover:border-smoke transition"
                   title="重新生成"
                 >
-                  <RotateCcw size={12} />
-                  重新生成
+                  <RotateCcw size={11} />
+                  <span className="font-mono">RETRY</span>
                 </button>
               )}
             </div>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+export const MessageBubble = memo(MessageBubbleBase);
+
+/**
+ * 流式内容渲染：
+ * - 已稳定部分用 Markdown 渲染
+ * - 新增部分（自上次渲染后）包裹在 .token span 中，触发 token-glow 动画
+ * - 末尾跟随发光脉冲光标
+ * 这样每个新出现的文字片段都会"灵动地发光产生"。
+ */
+function StreamingContent({ content }: { content: string }) {
+  const prevLenRef = useRef(0);
+
+  const prevLen = prevLenRef.current;
+  const stable = content.slice(0, prevLen);
+  const live = content.slice(prevLen);
+
+  useEffect(() => {
+    prevLenRef.current = content.length;
+  }, [content]);
+
+  return (
+    <div className="streaming">
+      {stable && <Markdown content={stable} />}
+      {live && <span className="token">{live}</span>}
+      <span className="stream-cursor" />
     </div>
   );
 }
@@ -146,21 +155,19 @@ function Spark({ size, strokeWidth }: { size: number; strokeWidth: number }) {
   );
 }
 
-function ThinkingDots({ text }: { text: string | null }) {
+function ThinkingDots() {
   return (
     <div className="flex items-center gap-2 py-1">
       <div className="flex items-center gap-1.5">
         {[0, 1, 2].map((i) => (
           <span
             key={i}
-            className="w-1.5 h-1.5 rounded-full bg-content-faint animate-pulse"
-            style={{ animationDelay: `${i * 0.18}s`, animationDuration: "1s" }}
+            className="w-1 h-1 rounded-full bg-stellar animate-breathe"
+            style={{ animationDelay: `${i * 0.2}s` }}
           />
         ))}
       </div>
-      {text && (
-        <span className="text-xs text-content-faint animate-pulse">{text}</span>
-      )}
+      <span className="eyebrow animate-breathe">THINKING</span>
     </div>
   );
 }

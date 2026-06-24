@@ -43,11 +43,11 @@ export default defineConfig({
           registerType: 'autoUpdate',
           includeAssets: ['favicon.svg'],
           manifest: {
-            name: '静识 · 本地优先对话',
-            short_name: '静识',
-            description: '本地优先的大模型对话应用，支持 DeepSeek 云端与浏览器内本地推理，离线可用。',
-            theme_color: '#0d0d0f',
-            background_color: '#0d0d0f',
+            name: 'Quiet · DeepSeek 对话',
+            short_name: 'Quiet',
+            description: 'DeepSeek 云端对话应用，API Key 本地加密，隐私至上。',
+            theme_color: '#0c0c0b',
+            background_color: '#0c0c0b',
             display: 'standalone',
             orientation: 'portrait',
             // 相对路径：兼容 GitHub Pages 子路径部署
@@ -64,23 +64,6 @@ export default defineConfig({
           },
           workbox: {
             globPatterns: ['**/*.{js,css,html,svg,woff2}'],
-            // 仅缓存 Transformers.js 引擎库 CDN（jsdelivr/esm.sh/unpkg），支持离线加载引擎。
-            // 模型权重不在此拦截：Workbox CacheFirst 对跨域请求会抛 no-response 错误，
-            // 且 Transformers.js 自身通过 env.useBrowserCache 用 IndexedDB 缓存权重，更可靠。
-            runtimeCaching: [
-              {
-                urlPattern: ({ url }) =>
-                  url.origin === 'https://cdn.jsdelivr.net' ||
-                  url.origin === 'https://esm.sh' ||
-                  url.origin === 'https://unpkg.com',
-                handler: 'CacheFirst',
-                options: {
-                  cacheName: 'transformers-cdn',
-                  expiration: { maxEntries: 32, maxAgeSeconds: 60 * 60 * 24 * 30 },
-                  cacheableResponse: { statuses: [0, 200] },
-                },
-              },
-            ],
           },
         })]),
   ],

@@ -1,12 +1,10 @@
 // 共享类型定义
 
-export type ChatMode = "deepseek" | "local";
 export type Role = "system" | "user" | "assistant";
 
 export interface Session {
   id: string;
   title: string;
-  mode: ChatMode;
   model: string;
   createdAt: number;
   updatedAt: number;
@@ -41,38 +39,20 @@ export interface Settings {
   keySalt: string | null;
   /** AES-GCM IV（base64） */
   keyIv: string | null;
-  mode: ChatMode;
   cloudModel: string;
-  localModel: string;
   temperature: number;
   maxTokens: number;
   topP: number;
   onlineSearch: boolean;
-  /** 本地模型下载镜像源：'auto' | 'hf' | 'hf-mirror' */
-  modelMirror: "auto" | "hf" | "hf-mirror";
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   encryptedKey: null,
   keySalt: null,
   keyIv: null,
-  mode: "deepseek",
   cloudModel: "deepseek-chat",
-  localModel: "qwen2.5-0.5b-q4", // 默认最小模型，下载最快
   temperature: 0.7,
   maxTokens: 2048,
   topP: 0.95,
   onlineSearch: false,
-  modelMirror: "hf-mirror", // 默认国内镜像，中国境内下载更快
 };
-
-export type BackendType = "webgpu" | "wasm" | "unknown";
-export type LocalModelStatus = "idle" | "downloading" | "loading" | "ready" | "error";
-
-export interface DownloadProgress {
-  modelId: string;
-  file: string;
-  progress: number; // 0-100
-  loaded: number;
-  total: number;
-}

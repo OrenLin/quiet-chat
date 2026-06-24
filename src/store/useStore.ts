@@ -1,4 +1,4 @@
-// 全局状态管理（Zustand）：会话、设置、密钥、聊天流、本地模型
+// 全局状态管理（Zustand）：会话、设置、密钥、聊天流
 // 密钥材料（CryptoKey / 明文 API Key）仅存于模块级变量，不进入 React 状态或持久化。
 
 import { create, type StoreApi } from "zustand";
@@ -6,11 +6,7 @@ import type {
   Session,
   Message,
   Settings,
-  ChatMode,
   TokenUsage,
-  BackendType,
-  LocalModelStatus,
-  DownloadProgress,
 } from "@/lib/types";
 import { DEFAULT_SETTINGS } from "@/lib/types";
 import {
@@ -19,7 +15,6 @@ import {
   deleteSession as dbDeleteSession,
   getMessages,
   putMessage,
-  updateMessageContent,
 } from "@/lib/db";
 import { loadSettings, saveSettings, hasEncryptedKey } from "@/lib/settings";
 import {
@@ -30,30 +25,16 @@ import {
   base64ToBytes,
 } from "@/lib/crypto";
 import { DeepSeekProvider } from "@/lib/providers/deepseek";
-import { LocalProvider } from "@/lib/providers/local";
-import { AbortError, type ProgressInfo } from "@/lib/providers/types";
-import { pickDevice } from "@/lib/models";
+import { AbortError } from "@/lib/providers/types";
 
 // ---- 模块级密钥材料（仅内存） ----
 let cryptoKey: CryptoKey | null = null;
 let rawApiKey: string | null = null;
-let localProvider: LocalProvider | null = null;
 let deepseekProvider: DeepSeekProvider | null = null;
 
 function uid(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function getLocalProvider(modelId: string, mirror: "auto" | "hf" | "hf-mirror" = "auto"): LocalProvider {
-  if (!localProvider) {
-    localProvider = new LocalProvider(modelId);
-    localProvider.setMirror(mirror);
-  } else {
-    localProvider.setModel(modelId);
-    localProvider.setMirror(mirror);
-  }
-  return localProvider;
 }
 
 function getDeepSeekProvider(key: string, model: string): DeepSeekProvider {
@@ -84,28 +65,11 @@ interface ChatState {
   tokenUsage: TokenUsage | null;
   error: string | null;
 
-  // 本地模型
-  localStatus: LocalModelStatus;
-  localProgress: number;
-  localMessage: string;
-  backend: BackendType;
-  tokPerSec: number;
-  downloadProgress: DownloadProgress | null;
-  // 详细下载信息
-  currentFile: string | null;
-  fileProgress: number;
-  filesCompleted: number;
-  filesTotal: number;
-  loadedBytes: number;
-  totalBytes: number;
-  speedBps: number;
-  etaSeconds: number;
-
   // 初始化
   hydrate: () => Promise<void>;
 
   // 会话
-  createSession: (mode?: ChatMode) => Promise<Session>;
+  createSession: () => Promise<Session>;
   selectSession: (id: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
   renameSession: (id: string, title: string) => Promise<void>;
@@ -120,15 +84,11 @@ interface ChatState {
 
   // 设置
   updateSettings: (patch: Partial<Settings>) => void;
-  setMode: (mode: ChatMode) => void;
 
   // 聊天
   sendMessage: (text: string) => Promise<void>;
   stopGeneration: () => void;
   regenerate: () => Promise<void>;
-
-  // 本地模型
-  preloadLocalModel: () => Promise<void>;
 }
 
 export const useStore = create<ChatState>((set, get) => ({
@@ -146,21 +106,6 @@ export const useStore = create<ChatState>((set, get) => ({
   tokenUsage: null,
   error: null,
 
-  localStatus: "idle",
-  localProgress: 0,
-  localMessage: "",
-  backend: "unknown",
-  tokPerSec: 0,
-  downloadProgress: null,
-  currentFile: null,
-  fileProgress: 0,
-  filesCompleted: 0,
-  filesTotal: 0,
-  loadedBytes: 0,
-  totalBytes: 0,
-  speedBps: 0,
-  etaSeconds: 0,
-
   hydrate: async () => {
     const settings = loadSettings();
     const sessions = await getAllSessions();
@@ -170,27 +115,14 @@ export const useStore = create<ChatState>((set, get) => ({
       needsKeySetup: hasEncryptedKey(settings),
       hydrated: true,
     });
-    // 请求持久化存储，防止手机浏览器在空间不足时清理已下载的模型
-    if (navigator.storage?.persist) {
-      try {
-        await navigator.storage.persist();
-      } catch {
-        /* 忽略 */
-      }
-    }
-    // 检测后端（iOS 强制 WASM，其他优先 WebGPU）
-    const { device } = await pickDevice();
-    set({ backend: device === "webgpu" ? "webgpu" : "wasm" });
   },
 
-  createSession: async (mode) => {
+  createSession: async () => {
     const settings = get().settings;
-    const m = mode ?? settings.mode;
     const session: Session = {
       id: uid(),
       title: "新对话",
-      mode: m,
-      model: m === "deepseek" ? settings.cloudModel : settings.localModel,
+      model: settings.cloudModel,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -327,10 +259,6 @@ export const useStore = create<ChatState>((set, get) => ({
     set({ settings: newSettings });
   },
 
-  setMode: (mode) => {
-    get().updateSettings({ mode });
-  },
-
   // ---- 聊天 ----
 
   sendMessage: async (text) => {
@@ -396,11 +324,7 @@ export const useStore = create<ChatState>((set, get) => ({
   stopGeneration: () => {
     const state = get();
     if (!state.isGenerating) return;
-    if (state.settings.mode === "deepseek" && deepseekProvider) {
-      deepseekProvider.abort();
-    } else if (state.settings.mode === "local" && localProvider) {
-      localProvider.abort();
-    }
+    if (deepseekProvider) deepseekProvider.abort();
   },
 
   regenerate: async () => {
@@ -436,69 +360,6 @@ export const useStore = create<ChatState>((set, get) => ({
     }));
     await runChat(get, set, sessionId, newAssistant, chatMessages);
   },
-
-  // ---- 本地模型预加载 ----
-
-  preloadLocalModel: async () => {
-    const { settings } = get();
-    if (settings.mode !== "local") return;
-    const provider = getLocalProvider(settings.localModel, settings.modelMirror);
-    if (await provider.isReady()) {
-      set({ localStatus: "ready", localProgress: 100, localMessage: "模型就绪" });
-      return;
-    }
-    set({
-      localStatus: "downloading",
-      localProgress: 0,
-      localMessage: "准备下载…",
-      currentFile: null,
-      fileProgress: 0,
-      filesCompleted: 0,
-      filesTotal: 0,
-      loadedBytes: 0,
-      totalBytes: 0,
-      speedBps: 0,
-      etaSeconds: 0,
-    });
-    try {
-      await provider.ensureLoaded((info: ProgressInfo) => {
-        if (info.stage === "init") {
-          set({ localStatus: "downloading", localMessage: info.message ?? "初始化…" });
-        } else if (info.stage === "downloading") {
-          set({
-            localStatus: "downloading",
-            localProgress: info.progress,
-            localMessage: info.message ?? "下载中…",
-            currentFile: info.currentFile ?? null,
-            fileProgress: info.fileProgress ?? 0,
-            filesCompleted: info.filesCompleted ?? 0,
-            filesTotal: info.filesTotal ?? 0,
-            loadedBytes: info.loadedBytes ?? 0,
-            totalBytes: info.totalBytes ?? 0,
-            speedBps: info.speedBps ?? 0,
-            etaSeconds: info.etaSeconds ?? 0,
-          });
-        } else if (info.stage === "loading") {
-          set({ localStatus: "loading", localProgress: info.progress, localMessage: info.message ?? "加载中…" });
-        } else if (info.stage === "ready") {
-          const msg = info.message ?? "模型就绪";
-          const tokMatch = msg.match(/([\d.]+)\s*tok\/s/);
-          set({
-            localStatus: "ready",
-            localProgress: 100,
-            localMessage: msg,
-            tokPerSec: tokMatch ? parseFloat(tokMatch[1]) : get().tokPerSec,
-          });
-        }
-      });
-      set({ localStatus: "ready", localProgress: 100, localMessage: "模型就绪" });
-    } catch (e) {
-      set({
-        localStatus: "error",
-        localMessage: (e as Error).message ?? "加载失败",
-      });
-    }
-  },
 }));
 
 // ---- 内部：执行一次对话生成 ----
@@ -523,67 +384,23 @@ async function runChat(
   };
 
   try {
-    let result;
-    if (settings.mode === "deepseek") {
-      if (!rawApiKey) {
-        throw new Error("API Key 未解锁，请先输入密码解锁或前往设置配置。");
-      }
-      const provider = getDeepSeekProvider(rawApiKey, settings.cloudModel);
-      result = await provider.chat({
-        messages: chatMessages,
-        temperature: settings.temperature,
-        maxTokens: settings.maxTokens,
-        topP: settings.topP,
-        onToken: (delta) => {
-          const cur = get().messagesBySession[sessionId]?.find(
-            (m) => m.id === assistantMsg.id,
-          );
-          updateAssistant((cur?.content ?? "") + delta);
-        },
-        onUsage: (usage) => set({ tokenUsage: usage }),
-      });
-    } else {
-      const provider = getLocalProvider(settings.localModel, settings.modelMirror);
-      set({ localStatus: "loading", localMessage: "推理中…" });
-      result = await provider.chat({
-        messages: chatMessages,
-        temperature: settings.temperature,
-        maxTokens: settings.maxTokens,
-        topP: settings.topP,
-        onProgress: (info: ProgressInfo) => {
-          if (info.stage === "init") {
-            set({ localStatus: "downloading", localMessage: info.message ?? "初始化…" });
-          } else if (info.stage === "downloading") {
-            set({
-              localStatus: "downloading",
-              localProgress: info.progress,
-              localMessage: info.message ?? "下载中…",
-              currentFile: info.currentFile ?? null,
-              fileProgress: info.fileProgress ?? 0,
-              filesCompleted: info.filesCompleted ?? 0,
-              filesTotal: info.filesTotal ?? 0,
-              loadedBytes: info.loadedBytes ?? 0,
-              totalBytes: info.totalBytes ?? 0,
-              speedBps: info.speedBps ?? 0,
-              etaSeconds: info.etaSeconds ?? 0,
-            });
-          } else if (info.stage === "loading") {
-            set({ localStatus: "loading", localProgress: info.progress, localMessage: info.message ?? "加载中…" });
-          } else if (info.stage === "ready") {
-            const tokMatch = (info.message ?? "").match(/([\d.]+)\s*tok\/s/);
-            if (tokMatch) set({ tokPerSec: parseFloat(tokMatch[1]) });
-          }
-        },
-        onToken: (delta) => {
-          const cur = get().messagesBySession[sessionId]?.find(
-            (m) => m.id === assistantMsg.id,
-          );
-          updateAssistant((cur?.content ?? "") + delta);
-        },
-        onUsage: (usage) => set({ tokenUsage: usage }),
-      });
-      set({ localStatus: "ready", localMessage: "就绪" });
+    if (!rawApiKey) {
+      throw new Error("API Key 未解锁，请先输入密码解锁或前往设置配置。");
     }
+    const provider = getDeepSeekProvider(rawApiKey, settings.cloudModel);
+    const result = await provider.chat({
+      messages: chatMessages,
+      temperature: settings.temperature,
+      maxTokens: settings.maxTokens,
+      topP: settings.topP,
+      onToken: (delta) => {
+        const cur = get().messagesBySession[sessionId]?.find(
+          (m) => m.id === assistantMsg.id,
+        );
+        updateAssistant((cur?.content ?? "") + delta);
+      },
+      onUsage: (usage) => set({ tokenUsage: usage }),
+    });
 
     // 持久化最终助手消息
     assistantMsg.content = result.content;

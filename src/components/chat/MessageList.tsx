@@ -39,7 +39,7 @@ export function MessageList() {
         ref={containerRef}
         className="h-full overflow-y-auto overflow-x-hidden"
       >
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 space-y-8">
           {messages.map((m, i) => (
             <MessageBubble
               key={m.id}
@@ -49,7 +49,7 @@ export function MessageList() {
               onRegenerate={regenerate}
             />
           ))}
-          <div className="h-2" />
+          <div className="h-4" />
         </div>
       </div>
 
@@ -57,18 +57,18 @@ export function MessageList() {
       {!atBottom && (
         <button
           onClick={scrollToBottom}
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 w-9 h-9 rounded-full bg-ink-raised border border-ink-border shadow-soft flex items-center justify-center text-content-muted hover:text-content transition"
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 w-9 h-9 rounded-pill border border-graphite bg-void/80 backdrop-blur flex items-center justify-center text-ash hover:text-stellar hover:border-smoke transition"
           title="回到底部"
         >
-          <ArrowDown size={16} />
+          <ArrowDown size={15} strokeWidth={1.5} />
         </button>
       )}
 
-      {/* Token 用量（生成中/完成后底部） */}
+      {/* Token 用量 */}
       {tokenUsage && !isGenerating && (
         <div className="absolute bottom-4 right-4 hidden sm:block">
-          <span className="chip bg-ink-surface/80 backdrop-blur border border-ink-border text-content-faint">
-            本次 {tokenUsage.total} tokens
+          <span className="inline-flex items-center rounded-pill border border-graphite bg-void/80 backdrop-blur px-2.5 py-1 text-2xs text-ash font-mono" style={{ letterSpacing: "0.1em" }}>
+            {tokenUsage.total} TOKENS
           </span>
         </div>
       )}

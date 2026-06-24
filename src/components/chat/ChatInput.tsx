@@ -1,16 +1,17 @@
-// 输入区：自适应高度、发送/中止切换、字数与模式提示
+// 输入区：xAI 风格 —— 24px 圆角，hairline 边框，focus 时 signal blue border + bone ring
+// 自适应高度、发送/中止切换、联网开关
 import { useRef, useState, useEffect } from "react";
-import { Send, Square, Globe } from "lucide-react";
+import { ArrowUp, Square, Globe } from "lucide-react";
 import { useStore } from "@/store/useStore";
 import { cn } from "@/lib/utils";
 
 export function ChatInput() {
   const [text, setText] = useState("");
+  const [focused, setFocused] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const isGenerating = useStore((s) => s.isGenerating);
   const sendMessage = useStore((s) => s.sendMessage);
   const stopGeneration = useStore((s) => s.stopGeneration);
-  const mode = useStore((s) => s.settings.mode);
   const onlineSearch = useStore((s) => s.settings.onlineSearch);
   const updateSettings = useStore((s) => s.updateSettings);
   const isKeyUnlocked = useStore((s) => s.isKeyUnlocked);
@@ -38,8 +39,7 @@ export function ChatInput() {
     }
   };
 
-  const blocked =
-    mode === "deepseek" && needsKeySetup && !isKeyUnlocked;
+  const blocked = needsKeySetup && !isKeyUnlocked;
   const charCount = text.length;
 
   return (
@@ -47,91 +47,91 @@ export function ChatInput() {
       <div className="max-w-3xl mx-auto">
         <div
           className={cn(
-            "relative rounded-3xl border bg-ink-raised transition-all",
-            isGenerating
-              ? "border-cloud/40 shadow-glow"
-              : "border-ink-border focus-within:border-cloud/50 focus-within:shadow-glow",
+            "relative rounded-input border bg-void transition-all duration-200",
+            focused
+              ? "border-signal"
+              : isGenerating
+                ? "border-smoke"
+                : "border-graphite",
           )}
+          style={
+            focused
+              ? { boxShadow: "0 0 0 2px #71717a" }
+              : undefined
+          }
         >
           <textarea
             ref={taRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             rows={1}
             placeholder={
               blocked
                 ? "请先在设置中配置并解锁 DeepSeek API Key…"
-                : mode === "deepseek"
-                  ? "给 DeepSeek 发消息…  (Enter 发送 / Shift+Enter 换行)"
-                  : "给本地模型发消息…  (首次将下载模型)"
+                : "What do you want to know?"
             }
             disabled={blocked}
-            className="w-full resize-none bg-transparent px-4 pt-3.5 pb-12 text-[15px] leading-relaxed text-content placeholder:text-content-faint focus:outline-none disabled:opacity-50"
-            style={{ maxHeight: 200 }}
+            className="w-full resize-none bg-transparent px-5 pt-4 pb-12 text-[15px] leading-relaxed text-stellar placeholder:text-ash focus:outline-none disabled:opacity-50"
+            style={{ maxHeight: 200, letterSpacing: "-0.025em" }}
           />
 
           {/* 底部工具栏 */}
-          <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-3 pb-2.5">
-            <div className="flex items-center gap-1.5">
-              {mode === "deepseek" && (
-                <button
-                  onClick={() =>
-                    updateSettings({ onlineSearch: !onlineSearch })
-                  }
-                  className={cn(
-                    "chip border transition",
-                    onlineSearch
-                      ? "bg-cloud/15 text-cloud border-cloud/30"
-                      : "bg-transparent text-content-faint border-ink-border hover:text-content",
-                  )}
-                  title="在线搜索"
-                >
-                  <Globe size={12} />
-                  联网
-                </button>
-              )}
-              <span className="chip bg-transparent text-content-faint border-0 px-1">
-                {mode === "deepseek" ? "DeepSeek" : "本地"}
-              </span>
+          <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-3 pb-3">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() =>
+                  updateSettings({ onlineSearch: !onlineSearch })
+                }
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-pill border px-2.5 py-1 text-2xs font-mono transition",
+                  onlineSearch
+                    ? "border-stellar text-stellar"
+                    : "border-graphite text-ash hover:text-stellar hover:border-smoke",
+                )}
+                title="在线搜索"
+              >
+                <Globe size={11} />
+                <span style={{ letterSpacing: "0.1em" }}>
+                  {onlineSearch ? "ONLINE" : "OFFLINE"}
+                </span>
+              </button>
             </div>
 
             <div className="flex items-center gap-2">
               {charCount > 0 && (
-                <span className="font-mono text-2xs text-content-faint">
-                  {charCount}
-                </span>
+                <span className="font-mono text-2xs text-ash">{charCount}</span>
               )}
               {isGenerating ? (
                 <button
                   onClick={stopGeneration}
-                  className="w-9 h-9 rounded-full bg-danger text-white flex items-center justify-center hover:brightness-110 transition shadow-soft"
+                  className="w-8 h-8 rounded-pill border border-graphite flex items-center justify-center text-stellar hover:border-smoke transition"
                   title="停止生成"
                 >
-                  <Square size={15} fill="currentColor" />
+                  <Square size={12} fill="currentColor" />
                 </button>
               ) : (
                 <button
                   onClick={submit}
                   disabled={!text.trim() || blocked}
                   className={cn(
-                    "w-9 h-9 rounded-full flex items-center justify-center transition shadow-soft",
+                    "w-8 h-8 rounded-pill flex items-center justify-center transition border",
                     text.trim() && !blocked
-                      ? "bg-cloud text-black hover:brightness-110 shadow-glow"
-                      : "bg-ink-border text-content-faint cursor-not-allowed",
+                      ? "border-stellar text-stellar hover:bg-stellar/10"
+                      : "border-graphite text-ash cursor-not-allowed",
                   )}
                   title="发送"
                 >
-                  <Send size={15} strokeWidth={2.2} />
+                  <ArrowUp size={14} strokeWidth={1.8} />
                 </button>
               )}
             </div>
           </div>
         </div>
-        <p className="text-center text-2xs text-content-faint mt-2">
-          {mode === "local"
-            ? "本地模型在浏览器内运行，离线可用 · 能力有限"
-            : "云端模式 · API Key 本地加密"}
+        <p className="text-center text-2xs text-ash mt-2.5 font-mono" style={{ letterSpacing: "0.1em" }}>
+          DEEPSEEK · API KEY 本地加密
         </p>
       </div>
     </div>

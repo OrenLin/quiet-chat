@@ -1,17 +1,8 @@
-// 会话侧栏：列表、新建、重命名、删除；移动端抽屉
+// 会话侧栏：列表、新建、重命名、删除；xAI 风格 —— 无填充、hairline 边框
 import { useState } from "react";
-import {
-  Plus,
-  Trash2,
-  Pencil,
-  Check,
-  X,
-  Cloud,
-  Cpu,
-} from "lucide-react";
+import { Plus, Trash2, Pencil, Check, X, MessageSquare } from "lucide-react";
 import { useStore } from "@/store/useStore";
 import { cn } from "@/lib/utils";
-import type { ChatMode } from "@/lib/types";
 
 interface SessionSidebarProps {
   onNavigate?: () => void; // 移动端选中后关闭抽屉
@@ -21,7 +12,6 @@ export function SessionSidebar({ onNavigate }: SessionSidebarProps) {
   const sessions = useStore((s) => s.sessions);
   const currentSessionId = useStore((s) => s.currentSessionId);
   const selectSession = useStore((s) => s.selectSession);
-  const createSession = useStore((s) => s.createSession);
   const deleteSession = useStore((s) => s.deleteSession);
   const renameSession = useStore((s) => s.renameSession);
   const newChat = useStore((s) => s.newChat);
@@ -52,26 +42,33 @@ export function SessionSidebar({ onNavigate }: SessionSidebarProps) {
   };
 
   return (
-    <div className="flex flex-col h-full bg-ink-surface border-r border-ink-border">
-      {/* 新建按钮 */}
-      <div className="p-3">
+    <div className="flex flex-col h-full bg-void border-r border-graphite">
+      {/* 顶部：Logo + 新建 */}
+      <div className="p-4 border-b border-graphite">
+        <div className="flex items-center justify-between mb-4">
+          <span className="font-mono text-sm text-stellar" style={{ letterSpacing: "0.1em" }}>
+            QUIET
+          </span>
+          <span className="eyebrow">DEEPSEEK</span>
+        </div>
         <button
           onClick={handleNew}
-          className="btn-primary w-full justify-center"
+          className="w-full inline-flex items-center justify-center gap-2 rounded-pill border border-stellar px-4 py-2 text-sm text-stellar hover:bg-stellar/5 transition"
+          style={{ letterSpacing: "-0.025em" }}
         >
-          <Plus size={16} strokeWidth={2.2} />
+          <Plus size={14} strokeWidth={1.5} />
           新对话
         </button>
       </div>
 
       {/* 会话列表 */}
-      <div className="flex-1 overflow-y-auto px-2 pb-2">
+      <div className="flex-1 overflow-y-auto px-2 py-2">
         {sessions.length === 0 ? (
-          <p className="text-center text-xs text-content-faint mt-8 px-4">
-            还没有对话，点击上方开始
+          <p className="text-center text-2xs text-ash mt-8 px-4 font-mono" style={{ letterSpacing: "0.1em" }}>
+            NO CONVERSATIONS
           </p>
         ) : (
-          <div className="space-y-0.5">
+          <div className="space-y-px">
             {sessions.map((s) => {
               const active = s.id === currentSessionId;
               const editing = editingId === s.id;
@@ -79,14 +76,14 @@ export function SessionSidebar({ onNavigate }: SessionSidebarProps) {
                 <div
                   key={s.id}
                   className={cn(
-                    "group relative flex items-center gap-2 rounded-xl px-2.5 py-2 cursor-pointer transition",
+                    "group relative flex items-center gap-2 px-2.5 py-2 cursor-pointer transition",
                     active
-                      ? "bg-ink-raised border border-ink-border"
-                      : "hover:bg-white/5 border border-transparent",
+                      ? "bg-stellar/5 border-l border-stellar"
+                      : "border-l border-transparent hover:bg-stellar/3",
                   )}
                   onClick={() => !editing && handleSelect(s.id)}
                 >
-                  <ModeIcon mode={s.mode} active={active} />
+                  <MessageSquare size={12} className={cn("shrink-0", active ? "text-stellar" : "text-ash")} strokeWidth={1.5} />
 
                   {editing ? (
                     <input
@@ -98,14 +95,16 @@ export function SessionSidebar({ onNavigate }: SessionSidebarProps) {
                         if (e.key === "Escape") setEditingId(null);
                       }}
                       onClick={(e) => e.stopPropagation()}
-                      className="flex-1 min-w-0 bg-transparent text-sm text-content focus:outline-none border-b border-cloud/50"
+                      className="flex-1 min-w-0 bg-transparent text-sm text-stellar focus:outline-none border-b border-stellar"
+                      style={{ letterSpacing: "-0.025em" }}
                     />
                   ) : (
                     <span
                       className={cn(
                         "flex-1 min-w-0 truncate text-sm",
-                        active ? "text-content" : "text-content-muted",
+                        active ? "text-stellar" : "text-ash",
                       )}
+                      style={{ letterSpacing: "-0.025em" }}
                     >
                       {s.title}
                     </span>
@@ -118,18 +117,18 @@ export function SessionSidebar({ onNavigate }: SessionSidebarProps) {
                           e.stopPropagation();
                           commitEdit();
                         }}
-                        className="p-1 text-local hover:bg-white/5 rounded"
+                        className="p-1 text-stellar hover:bg-stellar/10 rounded"
                       >
-                        <Check size={13} />
+                        <Check size={12} />
                       </button>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           setEditingId(null);
                         }}
-                        className="p-1 text-content-faint hover:bg-white/5 rounded"
+                        className="p-1 text-ash hover:text-stellar rounded"
                       >
-                        <X size={13} />
+                        <X size={12} />
                       </button>
                     </div>
                   ) : (
@@ -139,10 +138,10 @@ export function SessionSidebar({ onNavigate }: SessionSidebarProps) {
                           e.stopPropagation();
                           startEdit(s.id, s.title);
                         }}
-                        className="p-1 text-content-faint hover:text-content rounded"
+                        className="p-1 text-ash hover:text-stellar rounded"
                         title="重命名"
                       >
-                        <Pencil size={12} />
+                        <Pencil size={11} />
                       </button>
                       <button
                         onClick={(e) => {
@@ -151,10 +150,10 @@ export function SessionSidebar({ onNavigate }: SessionSidebarProps) {
                             deleteSession(s.id);
                           }
                         }}
-                        className="p-1 text-content-faint hover:text-danger rounded"
+                        className="p-1 text-ash hover:text-danger rounded"
                         title="删除"
                       >
-                        <Trash2 size={12} />
+                        <Trash2 size={11} />
                       </button>
                     </div>
                   )}
@@ -164,26 +163,11 @@ export function SessionSidebar({ onNavigate }: SessionSidebarProps) {
           </div>
         )}
       </div>
-    </div>
-  );
-}
 
-function ModeIcon({ mode, active }: { mode: ChatMode; active: boolean }) {
-  const Icon = mode === "deepseek" ? Cloud : Cpu;
-  return (
-    <span
-      className={cn(
-        "shrink-0 w-5 h-5 rounded-md flex items-center justify-center",
-        mode === "deepseek"
-          ? active
-            ? "bg-cloud/15 text-cloud"
-            : "bg-white/5 text-content-faint"
-          : active
-            ? "bg-local/15 text-local"
-            : "bg-white/5 text-content-faint",
-      )}
-    >
-      <Icon size={11} />
-    </span>
+      {/* 底部：地平线辉光 */}
+      <div className="horizon-glow h-16 border-t border-graphite flex items-end justify-center pb-3">
+        <span className="eyebrow relative z-10">QUIET · LOCAL FIRST</span>
+      </div>
+    </div>
   );
 }
