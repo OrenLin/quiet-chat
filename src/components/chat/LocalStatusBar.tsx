@@ -10,6 +10,7 @@ import {
   WifiOff,
   Server,
   FileDown,
+  RotateCcw,
 } from "lucide-react";
 import { useStore } from "@/store/useStore";
 import { getModelById } from "@/lib/models";
@@ -183,9 +184,23 @@ export function LocalStatusBar() {
 
       {/* 错误 */}
       {status === "error" && (
-        <div className="flex items-center gap-1.5 text-danger">
-          <AlertCircle size={12} />
-          <span className="truncate">{message}</span>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-start gap-1.5 text-danger">
+            <AlertCircle size={12} className="shrink-0 mt-0.5" />
+            <span className="flex-1 leading-relaxed">{message}</span>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => preloadLocalModel()}
+              className="chip bg-cloud/15 text-cloud border border-cloud/30 hover:bg-cloud/25 transition shrink-0"
+            >
+              <RotateCcw size={11} />
+              重试
+            </button>
+            <span className="text-content-faint text-2xs">
+              引擎失败请切换网络；模型失败请切「国内镜像」后重试
+            </span>
+          </div>
         </div>
       )}
 

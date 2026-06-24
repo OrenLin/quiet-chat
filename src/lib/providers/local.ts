@@ -17,9 +17,13 @@ import {
   AbortError,
 } from "./types";
 
-// Transformers.js 库本身的 CDN（jsdelivr 在中国通常可用）
-const TRANSFORMERS_CDN =
-  "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
+// Transformers.js 库的 CDN 源（按优先级降级，任一可用即可）
+// jsdelivr 在中国通常可用但偶发不稳定；esm.sh 与 unpkg 作为降级。
+const TRANSFORMERS_CDNS = [
+  "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1",
+  "https://esm.sh/@huggingface/transformers@3.8.1",
+  "https://unpkg.com/@huggingface/transformers@3.8.1",
+];
 
 // 模型权重镜像源
 const MIRROR_HOSTS = {
@@ -33,17 +37,41 @@ type TfModule = any;
 let tfPromise: Promise<TfModule> | null = null;
 let currentMirror: "auto" | "hf" | "hf-mirror" = "auto";
 
-function loadTransformers(mirror: "auto" | "hf" | "hf-mirror"): Promise<TfModule> {
-  currentMirror = mirror;
-  if (!tfPromise) {
-    tfPromise = import(/* @vite-ignore */ TRANSFORMERS_CDN).then((mod) => {
-      mod.env.allowLocalModels = false;
-      mod.env.useBrowserCache = true;
-      // 根据镜像设置远程主机
-      applyMirror(mod, mirror);
-      return mod;
-    });
+/** 引擎（Transformers.js 库）加载失败 —— 通常是 CDN 网络问题 */
+export class EngineLoadError extends Error {
+  constructor(public readonly triedHosts: string[]) {
+    super(
+      "推理引擎加载失败：所有 CDN 均无法访问。请检查网络后重试，或切换 Wi-Fi / 移动数据。",
+    );
+    this.name = "EngineLoadError";
   }
+}
+
+function loadTransformers(
+  mirror: "auto" | "hf" | "hf-mirror",
+): Promise<TfModule> {
+  currentMirror = mirror;
+  if (tfPromise) return tfPromise;
+
+  tfPromise = (async () => {
+    const tried: string[] = [];
+    for (const cdn of TRANSFORMERS_CDNS) {
+      tried.push(cdn);
+      try {
+        const mod = await import(/* @vite-ignore */ cdn);
+        mod.env.allowLocalModels = false;
+        mod.env.useBrowserCache = true;
+        applyMirror(mod, mirror);
+        return mod;
+      } catch (e) {
+        console.warn(`[transformers] CDN 加载失败: ${cdn}`, e);
+      }
+    }
+    // 全部失败：清空缓存以便下次重试
+    tfPromise = null;
+    throw new EngineLoadError(tried);
+  })();
+
   return tfPromise;
 }
 
@@ -269,11 +297,24 @@ export class LocalProvider implements ChatProvider {
       message: "加载模型到内存…",
     });
 
-    const generator = await tf.pipeline("text-generation", config.repo, {
-      dtype: config.dtype,
-      device: this.device,
-      progress_callback: progressCallback,
-    });
+    let generator: TfModule;
+    try {
+      generator = await tf.pipeline("text-generation", config.repo, {
+        dtype: config.dtype,
+        device: this.device,
+        progress_callback: progressCallback,
+      });
+    } catch (e) {
+      if (e instanceof EngineLoadError) throw e;
+      const msg = (e as Error)?.message ?? String(e);
+      // 常见模型下载失败：网络中断 / 404 / CORS
+      if (/fetch|network|Failed to|404|CORS|ERR_/i.test(msg)) {
+        throw new Error(
+          `模型下载失败：${msg}。可尝试切换「国内镜像」源后重试。`,
+        );
+      }
+      throw new Error(`模型加载失败：${msg}`);
+    }
 
     onProgress?.({ stage: "ready", progress: 100, message: "模型就绪" });
 

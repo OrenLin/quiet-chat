@@ -64,25 +64,32 @@ export default defineConfig({
           },
           workbox: {
             globPatterns: ['**/*.{js,css,html,svg,woff2}'],
-            // 缓存 Transformers.js CDN 库代码，支持离线加载本地推理引擎
+            // 缓存 Transformers.js CDN 库代码 + 模型权重镜像，支持离线加载
             runtimeCaching: [
               {
-                urlPattern: ({ url }) => url.origin === 'https://cdn.jsdelivr.net',
+                // 引擎库 CDN：jsdelivr / esm.sh / unpkg 任一降级
+                urlPattern: ({ url }) =>
+                  url.origin === 'https://cdn.jsdelivr.net' ||
+                  url.origin === 'https://esm.sh' ||
+                  url.origin === 'https://unpkg.com',
                 handler: 'CacheFirst',
                 options: {
                   cacheName: 'transformers-cdn',
-                  expiration: { maxEntries: 16, maxAgeSeconds: 60 * 60 * 24 * 30 },
+                  expiration: { maxEntries: 32, maxAgeSeconds: 60 * 60 * 24 * 30 },
                   cacheableResponse: { statuses: [0, 200] },
                 },
               },
               {
+                // 模型权重：官方源 + 国内镜像
                 urlPattern: ({ url }) =>
                   url.origin === 'https://huggingface.co' ||
-                  url.origin === 'https://cdn-lfs.huggingface.co',
+                  url.origin === 'https://cdn-lfs.huggingface.co' ||
+                  url.origin === 'https://hf-mirror.com' ||
+                  url.origin === 'https://cdn-lfs.hf-mirror.com',
                 handler: 'CacheFirst',
                 options: {
                   cacheName: 'hf-models',
-                  expiration: { maxEntries: 40, maxAgeSeconds: 60 * 60 * 24 * 30 },
+                  expiration: { maxEntries: 60, maxAgeSeconds: 60 * 60 * 24 * 30 },
                   cacheableResponse: { statuses: [0, 200] },
                 },
               },
